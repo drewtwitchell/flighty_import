@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.4.0"
+VERSION = "1.5.0"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py"]
 
@@ -410,8 +410,10 @@ def parse_email_date(date_str):
         return datetime.min
 
 
-def forward_email(config, msg, from_addr, subject):
-    """Forward an email to Flighty."""
+def forward_email(config, msg, from_addr, subject, max_retries=3):
+    """Forward an email to Flighty with retry logic."""
+    import time
+
     forward_msg = MIMEMultipart('mixed')
     forward_msg['From'] = config['email']
     forward_msg['To'] = config['flighty_email']
@@ -433,15 +435,22 @@ Subject: {subject}
     if html_body:
         forward_msg.attach(MIMEText(html_body, 'html'))
 
-    try:
-        with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=30) as server:
-            server.starttls()
-            server.login(config['email'], config['password'])
-            server.send_message(forward_msg)
-        return True
-    except Exception as e:
-        print(f"\n      Error sending: {e}")
-        return False
+    for attempt in range(max_retries):
+        try:
+            with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=30) as server:
+                server.starttls()
+                server.login(config['email'], config['password'])
+                server.send_message(forward_msg)
+            return True
+        except Exception as e:
+            if attempt < max_retries - 1:
+                wait_time = (attempt + 1) * 5  # 5s, 10s, 15s
+                print(f"retry in {wait_time}s...", end="", flush=True)
+                time.sleep(wait_time)
+            else:
+                print(f"\n      Error after {max_retries} attempts: {e}")
+                return False
+    return False
 
 
 def connect_imap(config):
@@ -696,10 +705,15 @@ def display_flight_summary(to_forward, skipped, all_flights):
 
 def forward_flights(config, to_forward, processed, dry_run):
     """Phase 4: Forward the selected flights to Flighty."""
+    import time
+
     forwarded = 0
     total = len(to_forward)
 
     for idx, flight in enumerate(to_forward):
+        # Small delay between sends to avoid rate limiting (except first one)
+        if idx > 0 and not dry_run:
+            time.sleep(2)
         conf = flight['confirmation'] or 'Unknown'
         info = flight['flight_info']
 
