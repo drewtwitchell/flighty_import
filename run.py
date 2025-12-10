@@ -570,7 +570,22 @@ def forward_flights(config, to_forward, processed, dry_run):
 
     for flight in to_forward:
         conf = flight['confirmation'] or 'Unknown'
-        print(f"\n  Forwarding: {conf}...", end=" ")
+        info = flight['flight_info']
+
+        # Build flight details string
+        details = []
+        if info.get("airports"):
+            details.append(" -> ".join(info["airports"][:2]))
+        if info.get("flight_numbers"):
+            details.append(f"Flight {', '.join(info['flight_numbers'][:2])}")
+        if info.get("dates"):
+            details.append(info["dates"][0])
+
+        details_str = " | ".join(details) if details else "No details"
+
+        print(f"\n  Forwarding: {conf}")
+        print(f"    {details_str}")
+        print(f"    Status: ", end="")
 
         if dry_run:
             print("[DRY RUN - not sent]")
@@ -578,7 +593,7 @@ def forward_flights(config, to_forward, processed, dry_run):
             continue
 
         if forward_email(config, flight["msg"], flight["from_addr"], flight["subject"]):
-            print("Done!")
+            print("Sent!")
             forwarded += 1
 
             # Record as processed
