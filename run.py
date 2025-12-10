@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.3.0"
+VERSION = "1.4.0"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py"]
 
@@ -434,13 +434,13 @@ Subject: {subject}
         forward_msg.attach(MIMEText(html_body, 'html'))
 
     try:
-        with smtplib.SMTP(config['smtp_server'], config['smtp_port']) as server:
+        with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=30) as server:
             server.starttls()
             server.login(config['email'], config['password'])
             server.send_message(forward_msg)
         return True
     except Exception as e:
-        print(f"      Error sending: {e}")
+        print(f"\n      Error sending: {e}")
         return False
 
 
@@ -814,8 +814,18 @@ def run(dry_run=False):
 
         print()
 
+    except Exception as e:
+        print(f"\n\n*** ERROR: {e} ***")
+        print("\nThe script encountered an error. Your progress has been saved.")
+        print("Run the script again to continue from where it left off.")
+        print(f"\nTechnical details: {type(e).__name__}: {e}")
+        import traceback
+        traceback.print_exc()
     finally:
-        mail.logout()
+        try:
+            mail.logout()
+        except:
+            pass
 
 
 def main():
