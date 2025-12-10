@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.7.3"
+VERSION = "1.7.4"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -1076,8 +1076,21 @@ def run(dry_run=False, days_override=None):
 
             print(f"\n  Successfully forwarded: {forwarded}/{len(to_forward)}")
         else:
-            print("\n  Nothing to forward.")
+            print("\n  Nothing new to forward.")
 
+        # Show helpful next steps
+        print()
+        print("-" * 60)
+        print("  WHAT'S NEXT?")
+        print("-" * 60)
+        print(f"\n  You searched the last {config['days_back']} days.")
+        print()
+        print("  To search further back:")
+        print("    python3 run.py --days 180    (6 months)")
+        print("    python3 run.py --days 365    (1 year)")
+        print()
+        print("  Already imported flights will be skipped automatically.")
+        print("  Run anytime to check for new flight emails!")
         print()
 
     except Exception as e:
