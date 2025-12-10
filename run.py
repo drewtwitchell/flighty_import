@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.7"
+VERSION = "1.8.8"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -1092,53 +1092,49 @@ def display_previously_imported(processed):
     print("=" * 60)
     print(f"  PREVIOUSLY IMPORTED ({count} flights)")
     print("=" * 60)
+    print("  These flights were already sent to Flighty and will be skipped:\n")
 
-    # If many flights, just show a summary
-    if count > 10:
-        print(f"\n  {count} flights already sent to Flighty - will be skipped.")
-        print(f"  (Run with --reset to clear history and re-import all)\n")
+    for conf_code, data in sorted(confirmations.items()):
+        airports = data.get("airports", [])
+        dates = data.get("dates", [])
+        flight_nums = data.get("flight_numbers", [])
 
-        # Show just the confirmation codes in a compact format
-        codes = sorted(confirmations.keys())
-        codes_per_line = 8
-        print("  Confirmation codes:")
-        for i in range(0, len(codes), codes_per_line):
-            chunk = codes[i:i + codes_per_line]
-            print(f"    {', '.join(chunk)}")
-        print()
-    else:
-        # Show details for small number of flights
-        print("  These flights were already sent to Flighty and will be skipped:\n")
+        # Filter out bad airport codes that were saved before exclusions were added
+        valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
 
-        for conf_code, data in sorted(confirmations.items()):
-            airports = data.get("airports", [])
-            dates = data.get("dates", [])
-            flight_nums = data.get("flight_numbers", [])
+        # Build route - only if we have valid airports
+        route = " → ".join(valid_airports[:2]) if valid_airports else ""
 
-            # Filter out bad airport codes that were saved before exclusions were added
-            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+        # Only show flight number if it looks valid (not too long, is a number)
+        flight_str = ""
+        if flight_nums and len(flight_nums[0]) <= 5:
+            try:
+                int(flight_nums[0])  # Verify it's a number
+                flight_str = f"Flight {flight_nums[0]}"
+            except ValueError:
+                pass
 
-            # Build compact display
-            if valid_airports:
-                route = " → ".join(valid_airports[:2])
-            else:
-                route = ""
+        # Only show date if it doesn't look like garbage (has a month name or valid format)
+        date_str = ""
+        if dates and dates[0]:
+            d = dates[0]
+            # Check if it contains a real month name or looks like a date
+            months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+            if any(m in d for m in months) or '/' in d or '-' in d:
+                date_str = d
 
-            flight_str = f"Flight {flight_nums[0]}" if flight_nums else ""
-            date_str = dates[0] if dates else ""
+        # Build the display line - only include valid parts
+        line = f"  {conf_code}"
+        if route:
+            line += f"  {route}"
+        if flight_str:
+            line += f"  {flight_str}"
+        if date_str:
+            line += f"  {date_str}"
 
-            # Format: CONF   ROUTE   FLIGHT   DATE
-            line = f"  {conf_code}"
-            if route:
-                line += f"  {route}"
-            if flight_str:
-                line += f"  {flight_str}"
-            if date_str:
-                line += f"  {date_str}"
+        print(line)
 
-            print(line)
-
-        print()
+    print()
 
 
 def display_new_flights(to_forward):
@@ -1162,14 +1158,24 @@ def display_new_flights(to_forward):
 
         # Filter to only valid airport codes
         valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+        route = " → ".join(valid_airports[:2]) if valid_airports else ""
 
-        if valid_airports:
-            route = " → ".join(valid_airports[:2])
-        else:
-            route = ""
+        # Only show flight number if it looks valid
+        flight_str = ""
+        if flight_nums and len(flight_nums[0]) <= 5:
+            try:
+                int(flight_nums[0])
+                flight_str = f"Flight {flight_nums[0]}"
+            except ValueError:
+                pass
 
-        flight_str = f"Flight {flight_nums[0]}" if flight_nums else ""
-        date_str = dates[0] if dates else ""
+        # Only show date if it looks valid
+        date_str = ""
+        if dates and dates[0]:
+            d = dates[0]
+            months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+            if any(m in d for m in months) or '/' in d or '-' in d:
+                date_str = d
 
         line = f"  {conf}"
         if route:
