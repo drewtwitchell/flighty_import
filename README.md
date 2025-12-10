@@ -6,14 +6,22 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 
 - Connects to any email provider (AOL, Gmail, Yahoo, Outlook, iCloud, or custom IMAP)
 - Detects flight confirmations from 15+ airlines
-- Forwards emails to Flighty's import service
-- **Smart deduplication** - tracks confirmation codes and flight details to avoid forwarding the same flight multiple times
-- Allows booking changes through (same confirmation code with different flights)
+- **Smart deduplication** - groups all emails by confirmation code, forwards only the latest
+- **Change detection** - if a flight is modified, automatically re-imports the updated version
 - Simple interactive setup - no coding required
+
+## How It Works
+
+The script runs in 4 phases:
+
+1. **Scan** - Searches your email for flight confirmations, groups by confirmation code
+2. **Select** - For each booking, picks the most recent email (handles flight changes)
+3. **Review** - Shows a summary of what will be imported
+4. **Forward** - Sends the selected emails to Flighty
 
 ## Supported Airlines
 
-JetBlue, Delta, United, American Airlines, Southwest, Alaska Airlines, Spirit, Frontier, Hawaiian Airlines, Air Canada, British Airways, Lufthansa, Emirates, KLM, Air France, Qantas, Singapore Airlines, and generic flight confirmation emails.
+JetBlue, Delta, United, American Airlines, Southwest, Alaska Airlines, Spirit, Frontier, Hawaiian Airlines, Air Canada, British Airways, Lufthansa, Emirates, and generic flight confirmation emails.
 
 ## Requirements
 
@@ -52,11 +60,11 @@ Most email providers require an "App Password" instead of your regular password:
 
 | Provider | How to get App Password |
 |----------|------------------------|
-| AOL | [AOL Account Security](https://login.aol.com/account/security) → Generate app password |
+| AOL | [AOL Account Security](https://login.aol.com/account/security) - Generate app password |
 | Gmail | [Google App Passwords](https://myaccount.google.com/apppasswords) (requires 2FA) |
-| Yahoo | [Yahoo Account Security](https://login.yahoo.com/account/security) → Generate app password |
+| Yahoo | [Yahoo Account Security](https://login.yahoo.com/account/security) - Generate app password |
 | Outlook | May work with regular password, or use [Microsoft Account](https://account.microsoft.com/security) |
-| iCloud | [Apple ID](https://appleid.apple.com/account/manage) → App-Specific Passwords |
+| iCloud | [Apple ID](https://appleid.apple.com/account/manage) - App-Specific Passwords |
 
 ## Usage
 
@@ -69,7 +77,6 @@ Most email providers require an "App Password" instead of your regular password:
 | `python3 run.py --setup` | Run the setup wizard |
 | `python3 run.py --reset` | Clear processed flights history |
 | `python3 run.py --help` | Show help message |
-| `python3 setup.py` | Run setup wizard directly |
 
 ### Test Mode (Dry Run)
 
@@ -87,67 +94,86 @@ Find and forward flight emails to Flighty:
 python3 run.py
 ```
 
-### Re-run Setup
+### Reset History
 
-```bash
-python3 setup.py
-# or
-python3 run.py --setup
-```
-
-### Reset Processed Flights
-
-If you want to re-process all flights (e.g., after fixing an issue):
+If you want to re-import all flights (e.g., starting fresh):
 
 ```bash
 python3 run.py --reset
 ```
 
-### Help
-
-```bash
-python3 run.py --help
-```
-
 ## Sample Output
 
 ```
-==================================================
-  Flighty Email Forwarder
-==================================================
+============================================================
+  FLIGHTY EMAIL FORWARDER
+============================================================
 
   Account:     yourname@aol.com
   Forward to:  track@my.flightyapp.com
-  Days back:   30
+  Looking back: 30 days
 
-Searching: INBOX
+[Phase 1] Scanning for flight emails...
 
-  Found: JetBlue
-    From: JetBlue Reservations <jetblueairways@email.jetblue.com>...
-    Subject: JetBlue booking confirmation for JOHN DOE - DJWNTF...
-    Confirmation: DJWNTF
-    Flights: 652
-    -> Forwarded to Flighty
+  Folder: INBOX
+    Scanning 250 emails...50...100...150...200 Done! (6 flight emails)
 
-  [SKIP] JetBlue - already processed (confirmation DJWNTF)
-    Subject: JetBlue booking confirmation for JOHN DOE - DJ...
-    Confirmation: DJWNTF
+  Found 3 unique confirmation(s)
 
---------------------------------------------------
-  Flight emails found:    2
-  Already processed:      1
-  Successfully forwarded: 1
---------------------------------------------------
+[Phase 2] Selecting latest version of each flight...
+
+============================================================
+  FLIGHT IMPORT SUMMARY
+============================================================
+
+  Found 3 unique booking(s):
+----------------------------------------------------------
+
+  EJZOSU [NEW]
+    Route: MCO -> BOS
+    Date: Sun, Dec 07
+    Flight: 652
+    Emails: 3 found (using latest from 12/05 03:45PM)
+
+  ENEIKV [UPDATE]
+    Route: BOS -> JFK
+    Date: Mon, Dec 08
+    Flight: 123
+    Emails: 2 found (using latest from 12/06 10:30AM)
+
+  DJWNTF [SKIP - already imported]
+    Route: LAX -> SFO
+    Date: Fri, Dec 12
+    Flight: 456
+    Email: 11/27/2025 08:25PM
+
+----------------------------------------------------------
+
+  Summary:
+    New flights to import: 2
+    Already imported:      1
+
+============================================================
+
+[Phase 4] Forwarding to Flighty...
+
+  Forwarding: EJZOSU
+    MCO -> BOS | Flight 652 | Sun, Dec 07
+    Status: Sent!
+
+  Forwarding: ENEIKV
+    BOS -> JFK | Flight 123 | Mon, Dec 08
+    Status: Sent!
+
+  Successfully forwarded: 2/2
 ```
 
 ## How Deduplication Works
 
-The script uses multiple methods to avoid forwarding duplicate flights:
-
-1. **Confirmation Code Tracking** - Extracts airline confirmation codes (e.g., `DJWNTF`) from emails and tracks which codes have been forwarded
-2. **Flight Change Detection** - If the same confirmation code appears with different flight numbers, it's treated as a booking change and forwarded
-3. **Content Hashing** - Creates a fingerprint of email content to catch exact duplicates
-4. **Email ID Tracking** - Remembers which specific emails have been processed
+1. **Groups by confirmation code** - All emails with the same booking reference are grouped together
+2. **Selects the latest** - Picks the most recent email by timestamp (handles multiple confirmations, reminders, changes)
+3. **Detects changes** - If you've already imported a flight but the details changed (new date, route, or flight number), it will re-import the updated version
+4. **Content fingerprinting** - Creates a fingerprint of each booking to detect true duplicates vs. changes
 
 ## Automation (Optional)
 
@@ -160,8 +186,8 @@ crontab -e
 # Run every hour
 0 * * * * cd /path/to/flighty_import && python3 run.py >> forwarder.log 2>&1
 
-# Run every 6 hours
-0 */6 * * * cd /path/to/flighty_import && python3 run.py >> forwarder.log 2>&1
+# Run daily at 8am
+0 8 * * * cd /path/to/flighty_import && python3 run.py >> forwarder.log 2>&1
 ```
 
 ## Files
@@ -171,7 +197,7 @@ crontab -e
 | `setup.py` | Interactive setup wizard |
 | `run.py` | Main script to find and forward emails |
 | `config.json` | Your configuration (created by setup, not tracked in git) |
-| `processed_flights.json` | Tracks confirmation codes and processed flights (not tracked in git) |
+| `processed_flights.json` | Tracks imported flights (not tracked in git) |
 
 ## Privacy & Security
 
@@ -186,17 +212,18 @@ crontab -e
 - Check that IMAP is enabled in your email settings
 
 **No emails found**
-- Try increasing the "days back" setting
+- Try increasing the "days back" setting in setup
 - Check that you're searching the correct folder
 - Run with `--dry-run` to see what's being detected
 
-**Same flight forwarded multiple times**
-- Run `python3 run.py --reset` to clear history and start fresh
-- The script now tracks by confirmation code, not just email ID
+**Wrong route or date showing**
+- The script extracts airports from patterns like "Orlando (MCO)" or "MCO -> BOS"
+- Dates are extracted from patterns like "Sun, Dec 07" or "December 7, 2025"
+- The actual forwarded email contains all original details - Flighty will parse it correctly
 
-**Emails not appearing in Flighty**
-- Verify the forwarding email is correct (`track@my.flightyapp.com`)
-- Check that Flighty email import is enabled in the app
+**Want to re-import everything**
+- Run `python3 run.py --reset` to clear history
+- Then run `python3 run.py` to import all flights fresh
 
 ## License
 
