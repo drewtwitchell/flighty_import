@@ -80,10 +80,13 @@ Most email providers require an "App Password" instead of your regular password:
 |---------|-------------|
 | `python3 run.py` | Run and forward flight emails (auto-updates first) |
 | `python3 run.py --dry-run` | Test without forwarding (see what would be sent) |
+| `python3 run.py --days N` | Search N days back (e.g., `--days 365` for 1 year) |
 | `python3 run.py --setup` | Run the setup wizard |
 | `python3 run.py --reset` | Clear processed flights history |
 | `python3 run.py --clean` | Clean up corrupt/temp files and start fresh |
 | `python3 run.py --help` | Show help message |
+
+You can combine options: `python3 run.py --days 180 --dry-run`
 
 ### Test Mode (Dry Run)
 
@@ -100,6 +103,26 @@ Find and forward flight emails to Flighty:
 ```bash
 python3 run.py
 ```
+
+### Searching More Days
+
+To search further back than your configured setting, use `--days`:
+
+```bash
+python3 run.py --days 365    # Search 1 year
+python3 run.py --days 180    # Search 6 months
+```
+
+This is a one-time override. To permanently change the setting, run `python3 run.py --setup`.
+
+### Re-running the Script
+
+**Already imported flights are automatically skipped!** When you run the script again:
+- Previously forwarded flights show as `[SKIP - already imported]`
+- Only NEW flights or flights with CHANGED details are forwarded
+- You'll see "X already processed" during the scan phase
+
+This means you can safely run the script multiple times - it won't send duplicates to Flighty.
 
 ### Reset History
 

@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.7.2"
+VERSION = "1.7.3"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -1009,7 +1009,7 @@ def forward_flights(config, to_forward, processed, dry_run):
     return forwarded
 
 
-def run(dry_run=False):
+def run(dry_run=False, days_override=None):
     """Main run function."""
     config = load_config()
 
@@ -1020,6 +1020,10 @@ def run(dry_run=False):
     if not config.get('email') or not config.get('password'):
         print("Email or password not configured! Run 'python3 setup.py'.")
         return
+
+    # Apply days override if specified
+    if days_override:
+        config['days_back'] = days_override
 
     print()
     print("=" * 60)
@@ -1135,10 +1139,15 @@ Flighty Email Forwarder v{VERSION}
 Usage:
     python3 run.py              Run and forward flight emails
     python3 run.py --dry-run    Test without forwarding
+    python3 run.py --days N     Search N days back (e.g., --days 180)
     python3 run.py --setup      Run setup wizard
     python3 run.py --reset      Clear processed flights history
     python3 run.py --clean      Clean up corrupt/temp files and start fresh
     python3 run.py --help       Show this help
+
+Examples:
+    python3 run.py --days 365           Search 1 year of emails
+    python3 run.py --days 180 --dry-run Test 6 months without sending
 
 First time? Run: python3 setup.py
 
@@ -1149,8 +1158,21 @@ Had issues or crashes? Run: python3 run.py --clean
     # Auto-update before running
     auto_update()
 
+    # Parse --days option
+    days_override = None
+    for i, arg in enumerate(args):
+        if arg == "--days" and i + 1 < len(args):
+            try:
+                days_override = int(args[i + 1])
+                if days_override < 1:
+                    print("Error: --days must be a positive number")
+                    return
+            except ValueError:
+                print(f"Error: --days requires a number, got '{args[i + 1]}'")
+                return
+
     dry_run = "--dry-run" in args or "-d" in args
-    run(dry_run=dry_run)
+    run(dry_run=dry_run, days_override=days_override)
 
 
 def wait_for_keypress():
