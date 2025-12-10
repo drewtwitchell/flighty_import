@@ -296,19 +296,64 @@ def generate_content_hash(subject, body):
     return hashlib.md5(normalized.encode()).hexdigest()[:16]
 
 
-def is_duplicate_flight(processed, confirmation_code, content_hash):
-    """Check if this flight has already been processed."""
-    # Check by content hash first (catches exact/near duplicates)
+def create_flight_fingerprint(flight_details):
+    """Create a fingerprint of the actual flight to detect real changes."""
+    # Combine key flight identifiers into a fingerprint
+    # Changes to any of these = a real flight change worth re-importing
+    parts = []
+
+    # Use airports (route)
+    airports = flight_details.get("airports", [])
+    if airports:
+        parts.append("-".join(sorted(airports[:4])))
+
+    # Use first date (primary travel date)
+    dates = flight_details.get("dates", [])
+    if dates:
+        # Normalize date format somewhat
+        date_str = dates[0].lower().strip()
+        parts.append(date_str)
+
+    # Use flight numbers
+    flights = flight_details.get("flights", [])
+    if flights:
+        parts.append("-".join(sorted(flights[:3])))
+
+    if not parts:
+        return None
+
+    return "|".join(parts)
+
+
+def is_duplicate_flight(processed, confirmation_code, content_hash, flight_details):
+    """
+    Check if this flight has already been processed.
+    Returns: (is_duplicate: bool, reason: str or None, is_change: bool)
+    """
+    # Check by content hash first (catches exact/near duplicates like forwards)
     if content_hash in processed.get("content_hashes", set()):
-        return True, "duplicate content"
+        return True, "duplicate content", False
 
-    # Check by confirmation code - simple rule: if we've seen it, skip it
-    # Airlines send multiple emails per booking (confirmation, reminders, receipts, etc.)
-    # If user needs to re-import after a change, they can use --reset
-    if confirmation_code and confirmation_code in processed.get("confirmations", {}):
-        return True, f"confirmation {confirmation_code}"
+    # Check by confirmation code + flight fingerprint
+    if confirmation_code:
+        existing = processed.get("confirmations", {}).get(confirmation_code)
+        if existing:
+            # Same confirmation exists - check if flight details actually changed
+            old_fingerprint = existing.get("fingerprint", "")
+            new_fingerprint = create_flight_fingerprint(flight_details)
 
-    return False, None
+            # If we can't create fingerprints, be conservative and skip
+            if not new_fingerprint:
+                return True, f"confirmation {confirmation_code}", False
+
+            # If fingerprints differ, this is a real change - allow it through!
+            if old_fingerprint and new_fingerprint != old_fingerprint:
+                return False, None, True  # Changed flight, allow through
+
+            # Same confirmation, same fingerprint = duplicate
+            return True, f"confirmation {confirmation_code}", False
+
+    return False, None, False
 
 
 def is_flight_email(from_addr, subject):
@@ -535,8 +580,8 @@ def search_folder(mail, config, folder, processed, dry_run):
         content_hash = generate_content_hash(subject, full_body)
 
         # Check for duplicates
-        is_dup, dup_reason = is_duplicate_flight(
-            processed, confirmation_code, content_hash
+        is_dup, dup_reason, is_change = is_duplicate_flight(
+            processed, confirmation_code, content_hash, flight_details
         )
 
         airline_name = airline["name"] if isinstance(airline, dict) else airline
@@ -552,7 +597,8 @@ def search_folder(mail, config, folder, processed, dry_run):
             continue
 
         # Show flight details
-        print(f"\n  {'[DRY RUN] ' if dry_run else ''}Found: {airline_name}")
+        change_indicator = "[CHANGE] " if is_change else ""
+        print(f"\n  {'[DRY RUN] ' if dry_run else ''}{change_indicator}Found: {airline_name}")
         print(f"    Subject: {subject[:60]}...")
         if confirmation_code:
             print(f"    Confirmation: {confirmation_code}")
@@ -560,6 +606,8 @@ def search_folder(mail, config, folder, processed, dry_run):
             print(f"    Route: {' -> '.join(flight_details['airports'][:2])}")
         if flight_details.get("dates"):
             print(f"    Date: {flight_details['dates'][0]}")
+        if is_change:
+            print(f"    ** Flight details changed - re-importing **")
 
         if not dry_run:
             if forward_email(config, msg, from_addr, subject):
@@ -571,7 +619,9 @@ def search_folder(mail, config, folder, processed, dry_run):
                 processed["content_hashes"].add(content_hash)
 
                 if confirmation_code:
+                    fingerprint = create_flight_fingerprint(flight_details)
                     processed["confirmations"][confirmation_code] = {
+                        "fingerprint": fingerprint,
                         "flights": flight_details.get("flights", []),
                         "dates": flight_details.get("dates", []),
                         "times": flight_details.get("times", []),
