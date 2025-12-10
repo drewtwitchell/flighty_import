@@ -137,17 +137,18 @@ def auto_update():
 
 def format_flight_line(conf, flight_info, airline=None, email_date=None, is_update=False, email_count=None):
     """Format a single flight for display."""
-    airports = flight_info.get("airports", [])
-    dates = flight_info.get("dates", [])
-    flights = flight_info.get("flights", [])
+    airports = flight_info.get("airports", []) if flight_info else []
+    dates = flight_info.get("dates", []) if flight_info else []
+    flights = flight_info.get("flights", []) if flight_info else []
 
     valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
     route = " → ".join(valid_airports[:2]) if valid_airports else ""
     date = dates[0] if dates else ""
     flight_num = flights[0] if flights else ""
 
-    # Build display line
-    parts = [f"  {conf:<8}"]
+    # Build display line - ensure conf is never None
+    conf_display = conf if conf else "------"
+    parts = [f"  {conf_display:<8}"]
     if flight_num:
         parts.append(f"{flight_num:<10}")
     if route:
