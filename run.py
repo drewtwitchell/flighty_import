@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.9.2"
+VERSION = "1.9.3"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -40,7 +40,7 @@ def auto_update():
 
     print()
     print("=" * 60)
-    print("  STEP 1 OF 5: CHECKING FOR UPDATES")
+    print("  STEP 1 OF 4: CHECKING FOR UPDATES")
     print("=" * 60)
     print()
     print("  Connecting to GitHub to check if a newer version exists...")
@@ -778,20 +778,27 @@ Subject: {subject}
 
                 print()  # New line for clarity
                 if is_rate_limit:
-                    print(f"        ^ EMAIL PROVIDER BLOCKED THIS - they limit how fast you can send")
+                    print(f"        BLOCKED by email provider (they limit sending speed)")
+                    print(f"        Error: {str(e)[:100]}")
                     if wait_mins > 0:
-                        print(f"        Waiting {wait_mins} min {wait_secs} sec before retry (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
+                        print(f"        Waiting {wait_mins} min {wait_secs} sec then retrying (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
                     else:
-                        print(f"        Waiting {wait_secs} sec before retry (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
+                        print(f"        Waiting {wait_secs} sec then retrying (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
                 else:
-                    print(f"        ^ Connection error. Waiting {wait_time}s before retry (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
+                    print(f"        Connection error: {str(e)[:100]}")
+                    if wait_mins > 0:
+                        print(f"        Waiting {wait_mins} min {wait_secs} sec then retrying (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
+                    else:
+                        print(f"        Waiting {wait_secs} sec then retrying (attempt {attempt + 2} of {max_attempts})...", end="", flush=True)
 
                 time.sleep(wait_time)
                 print(" retrying now...", end="", flush=True)
             else:
                 # All retries exhausted
                 print()
-                print(f"        ^ FAILED after {max_attempts} attempts - skipping this email")
+                print(f"        FAILED after {max_attempts} attempts")
+                print(f"        Final error: {str(e)}")
+                print(f"        This email will be skipped - run again later to retry")
                 return False
 
     return False
@@ -1300,7 +1307,7 @@ def forward_flights(config, to_forward, processed, dry_run):
                 subject = flight.get("subject", "Flight Confirmation")
 
                 if not msg:
-                    print("FAILED")
+                    print("FAILED - no message content found")
                     failed += 1
                     continue
 
@@ -1325,16 +1332,19 @@ def forward_flights(config, to_forward, processed, dry_run):
                             }
 
                         save_processed_flights(processed)
-                    except Exception:
-                        pass
+                        print(f"        (Progress saved)")
+                    except Exception as save_err:
+                        print(f"        Warning: Could not save progress: {save_err}")
                 else:
+                    # forward_email already printed detailed error info
                     failed += 1
 
             except Exception as send_err:
-                print(f"FAILED")
+                print(f"FAILED - {str(send_err)[:80]}")
                 failed += 1
 
         except Exception as e:
+            print(f"  [Error processing flight: {str(e)[:60]}]")
             failed += 1
             continue
 
@@ -1345,11 +1355,17 @@ def forward_flights(config, to_forward, processed, dry_run):
     elapsed_mins = int(elapsed // 60)
     elapsed_secs = int(elapsed % 60)
 
-    print(f"\n  Forwarding complete!")
-    print(f"  Time elapsed: {elapsed_mins} min {elapsed_secs} sec")
-    print(f"  Successfully sent: {forwarded} of {total}")
+    print()
+    print("  FORWARDING COMPLETE")
+    print()
+    print(f"  Time elapsed:       {elapsed_mins} min {elapsed_secs} sec")
+    print(f"  Successfully sent:  {forwarded} of {total}")
     if failed > 0:
-        print(f"  Failed: {failed} (run again to retry these)")
+        print(f"  Failed to send:     {failed}")
+        print()
+        print(f"  NOTE: {failed} email(s) could not be sent after multiple retries.")
+        print(f"  Run this script again later to retry the failed ones.")
+        print(f"  (Successfully sent flights are saved and won't be re-sent)")
 
     return forwarded
 
@@ -1370,10 +1386,10 @@ def run(dry_run=False, days_override=None):
     if days_override:
         config['days_back'] = days_override
 
-    # STEP 2: CONFIGURATION
+    # STEP 2: CONFIGURATION & CONNECT
     print()
     print("=" * 60)
-    print("  STEP 2 OF 5: LOADING YOUR SETTINGS")
+    print("  STEP 2 OF 4: CONNECTING TO YOUR EMAIL")
     print("=" * 60)
     print()
     print(f"  Email account:  {config['email']}")
@@ -1383,12 +1399,20 @@ def run(dry_run=False, days_override=None):
         print()
         print("  *** DRY RUN MODE - No emails will actually be sent ***")
     print()
-    print("  Settings loaded successfully!")
+    print(f"  Connecting to {config['imap_server']}...")
+    mail = connect_imap(config)
+    if not mail:
+        print()
+        print("  *** CONNECTION FAILED ***")
+        print("  Please check your email and password in config.json")
+        print("  Or run 'python3 setup.py' to reconfigure.")
+        return
+    print("  Connected successfully!")
 
     # STEP 3: LOAD HISTORY
     print()
     print("=" * 60)
-    print("  STEP 3 OF 5: CHECKING WHAT'S ALREADY IMPORTED")
+    print("  STEP 3 OF 4: CHECKING IMPORT HISTORY")
     print("=" * 60)
     print()
     print("  Loading your import history to avoid duplicates...")
@@ -1402,29 +1426,13 @@ def run(dry_run=False, days_override=None):
         print("  No previous imports found - this appears to be your first run!")
         print()
 
-    # STEP 4: CONNECT TO EMAIL
-    print()
-    print("=" * 60)
-    print("  STEP 4 OF 5: CONNECTING TO YOUR EMAIL")
-    print("=" * 60)
-    print()
-    print(f"  Connecting to {config['imap_server']}...")
-    mail = connect_imap(config)
-    if not mail:
-        print()
-        print("  *** CONNECTION FAILED ***")
-        print("  Please check your email and password in config.json")
-        print("  Or run 'python3 setup.py' to reconfigure.")
-        return
-    print("  Connected successfully!")
-
     try:
         folders = config.get('check_folders', ['INBOX'])
 
-        # STEP 5: SCANNING section
+        # STEP 4: SCANNING section
         print()
         print("=" * 60)
-        print("  STEP 5 OF 5: SCANNING YOUR EMAILS")
+        print("  STEP 4 OF 4: SCANNING & FORWARDING")
         print("=" * 60)
         print()
         print("  Now searching your email for flight confirmations...")
