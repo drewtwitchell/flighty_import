@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.2.0"
+VERSION = "1.3.0"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py"]
 
@@ -697,8 +697,9 @@ def display_flight_summary(to_forward, skipped, all_flights):
 def forward_flights(config, to_forward, processed, dry_run):
     """Phase 4: Forward the selected flights to Flighty."""
     forwarded = 0
+    total = len(to_forward)
 
-    for flight in to_forward:
+    for idx, flight in enumerate(to_forward):
         conf = flight['confirmation'] or 'Unknown'
         info = flight['flight_info']
 
@@ -713,9 +714,9 @@ def forward_flights(config, to_forward, processed, dry_run):
 
         details_str = " | ".join(details) if details else "No details"
 
-        print(f"\n  Forwarding: {conf}")
+        print(f"\n  [{idx + 1}/{total}] Forwarding: {conf}")
         print(f"    {details_str}")
-        print(f"    Status: ", end="")
+        print(f"    Status: ", end="", flush=True)
 
         if dry_run:
             print("[DRY RUN - not sent]")
@@ -737,6 +738,9 @@ def forward_flights(config, to_forward, processed, dry_run):
                     "forwarded_at": datetime.now().isoformat(),
                     "subject": flight["subject"][:100]
                 }
+
+            # Save immediately after each successful forward (crash protection)
+            save_processed_flights(processed)
         else:
             print("FAILED")
 
@@ -803,9 +807,6 @@ def run(dry_run=False):
                 print(f"\n[Phase 4] DRY RUN - showing what would be sent...")
 
             forwarded = forward_flights(config, to_forward, processed, dry_run)
-
-            if not dry_run:
-                save_processed_flights(processed)
 
             print(f"\n  Successfully forwarded: {forwarded}/{len(to_forward)}")
         else:
