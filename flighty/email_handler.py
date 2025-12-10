@@ -111,13 +111,103 @@ def connect_imap(config):
     Returns:
         IMAP4_SSL connection or None on failure
     """
+    import socket
+
     try:
+        # Set socket timeout for connection
+        socket.setdefaulttimeout(60)
         mail = imaplib.IMAP4_SSL(config['imap_server'], config['imap_port'])
         mail.login(config['email'], config['password'])
+        # Reset to no timeout for long operations
+        socket.setdefaulttimeout(None)
         return mail
+
     except imaplib.IMAP4.error as e:
-        print(f"\nLogin failed: {e}")
-        print("\nMake sure you're using an App Password, not your regular password.")
+        error_str = str(e).lower()
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  LOGIN FAILED                                              ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
+        print(f"  Error: {e}")
+        print()
+
+        if 'invalid' in error_str or 'authentication' in error_str or 'credential' in error_str:
+            print("  This usually means:")
+            print("    • You're using your regular password instead of an App Password")
+            print("    • The App Password was entered incorrectly")
+            print()
+            print("  To fix: Run 'python3 run.py --setup' and enter a new App Password")
+        elif 'disabled' in error_str or 'imap' in error_str:
+            print("  This usually means IMAP access is disabled in your email settings.")
+            print("  Enable IMAP access in your email provider's settings.")
+        else:
+            print("  Make sure you're using an App Password, not your regular password.")
+            print("  Run 'python3 run.py --setup' to reconfigure.")
+
+        print()
+        return None
+
+    except socket.timeout:
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  CONNECTION TIMED OUT                                      ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
+        print("  Could not connect to the email server within 60 seconds.")
+        print()
+        print("  This could mean:")
+        print("    • Your internet connection is slow or unstable")
+        print("    • The email server is temporarily unavailable")
+        print("    • A firewall is blocking the connection")
+        print()
+        print("  Try again in a few minutes.")
+        print()
+        return None
+
+    except socket.gaierror as e:
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  SERVER NOT FOUND                                          ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
+        print(f"  Could not find server: {config['imap_server']}")
+        print()
+        print("  This could mean:")
+        print("    • No internet connection")
+        print("    • The server address is incorrect")
+        print()
+        print("  Run 'python3 run.py --setup' to check your settings.")
+        print()
+        return None
+
+    except ConnectionRefusedError:
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  CONNECTION REFUSED                                        ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
+        print(f"  The server {config['imap_server']} refused the connection.")
+        print()
+        print("  This could mean:")
+        print("    • The port number is incorrect (should be 993 for IMAP SSL)")
+        print("    • The server doesn't allow IMAP connections")
+        print()
+        print("  Run 'python3 run.py --setup' to check your settings.")
+        print()
+        return None
+
+    except Exception as e:
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  CONNECTION ERROR                                          ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
+        print(f"  Unexpected error: {e}")
+        print()
+        print("  Try running 'python3 run.py --setup' to reconfigure,")
+        print("  or try again in a few minutes.")
+        print()
         return None
 
 

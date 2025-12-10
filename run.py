@@ -628,18 +628,40 @@ def wait_for_keypress():
     """Wait for user to press Enter before closing (for Windows users who double-click)."""
     import platform
     if platform.system() == "Windows":
-        print("\n" + "-" * 40)
-        input("Press Enter to close this window...")
+        print()
+        print("  ═" * 30)
+        print()
+        print("  Windows detected - window will stay open.")
+        print()
+        input("  Press Enter to close this window...")
 
 
 if __name__ == "__main__":
     try:
         main()
     except KeyboardInterrupt:
-        print("\n\nCancelled by user.")
+        print()
+        print()
+        print("  Cancelled by user (Ctrl+C).")
+        print("  Your progress has been saved - run again to continue.")
+        print()
     except Exception as e:
-        print(f"\n\nUnexpected error: {e}")
+        print()
+        print()
+        print("  ╔════════════════════════════════════════════════════════════╗")
+        print("  ║  UNEXPECTED ERROR                                          ║")
+        print("  ╚════════════════════════════════════════════════════════════╝")
+        print()
+        print(f"  Error: {e}")
+        print()
+        print("  This is likely a bug. Please report it at:")
+        print("  https://github.com/drewtwitchell/flighty_import/issues")
+        print()
+        print("  Technical details:")
         import traceback
         traceback.print_exc()
+        print()
+        print("  Your progress has been saved - run again to retry.")
+        print()
     finally:
         wait_for_keypress()
