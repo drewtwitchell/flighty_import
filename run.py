@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.4"
+VERSION = "1.8.5"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -981,6 +981,18 @@ def scan_for_flights(mail, config, folder, processed):
                     # Track which confirmations were skipped (only add once per confirmation)
                     if confirmation not in skipped_confirmations:
                         skipped_confirmations.append(confirmation)
+                        # Print the skipped flight details immediately
+                        stored = already_processed.get(confirmation, {})
+                        airports = stored.get("airports", [])
+                        dates = stored.get("dates", [])
+                        if airports:
+                            route = " → ".join(airports[:2])
+                        else:
+                            route = "?"
+                        date_str_display = dates[0][:20] if dates else "?"
+                        print(f"\r    [SKIP] {confirmation}: {route} | {date_str_display}" + " " * 20)
+                        # Reprint the progress line
+                        print(f"\r    Analyzing: {idx + 1}/{total} ({pct}%) - {flight_count} new, {skipped_count} already processed", end="", flush=True)
                     continue
 
             flight_count += 1
