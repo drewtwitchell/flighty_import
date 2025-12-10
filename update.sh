@@ -4,7 +4,8 @@
 
 cd "$(dirname "$0")"
 
-echo "Checking for updates..."
+echo ""
+echo "=== Checking for updates ==="
 
 # Make sure we're in a git repo
 if ! git rev-parse --is-inside-work-tree > /dev/null 2>&1; then
@@ -19,16 +20,18 @@ git fetch origin 2>/dev/null
 BEHIND=$(git rev-list --count HEAD..origin/main 2>/dev/null || echo "0")
 
 if [ "$BEHIND" = "0" ]; then
-    echo "  Already up to date!"
+    echo "Already up to date!"
+    echo ""
     exit 0
 fi
 
-echo "  $BEHIND update(s) available. Downloading..."
+echo "$BEHIND update(s) available. Downloading..."
 
 # Pull latest (config.json is gitignored so it's safe)
 if git pull origin main --quiet; then
-    echo "  Updated successfully!"
+    echo "Updated successfully!"
+    echo ""
 else
-    echo "  Update failed. Try running: git pull origin main"
+    echo "Update failed. Try running: git pull origin main"
     exit 1
 fi
