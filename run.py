@@ -401,10 +401,10 @@ def scan_for_flights(mail, config, folder):
     try:
         result, _ = mail.select(folder)
         if result != 'OK':
-            print(f"  Could not open folder: {folder}")
+            print(f"    Could not open folder: {folder}")
             return flights_found
     except:
-        print(f"  Could not open folder: {folder}")
+        print(f"    Could not open folder: {folder}")
         return flights_found
 
     since_date = (datetime.now() - timedelta(days=config['days_back'])).strftime("%d-%b-%Y")
@@ -414,9 +414,17 @@ def scan_for_flights(mail, config, folder):
         return flights_found
 
     email_ids = data[0].split()
-    print(f"  Scanning {len(email_ids)} emails...")
+    total = len(email_ids)
+    flight_count = 0
 
-    for email_id in email_ids:
+    # Progress indicator
+    print(f"    Scanning {total} emails", end="", flush=True)
+
+    for idx, email_id in enumerate(email_ids):
+        # Show progress every 50 emails
+        if idx > 0 and idx % 50 == 0:
+            print(f"...{idx}", end="", flush=True)
+
         # Fetch headers first (fast)
         result, header_data = mail.fetch(email_id, '(BODY[HEADER.FIELDS (FROM SUBJECT DATE)])')
         if result != 'OK':
@@ -433,6 +441,8 @@ def scan_for_flights(mail, config, folder):
         is_flight, airline = is_flight_email(from_addr, subject)
         if not is_flight:
             continue
+
+        flight_count += 1
 
         # Fetch full email body
         result, msg_data = mail.fetch(email_id, '(RFC822)')
@@ -472,6 +482,7 @@ def scan_for_flights(mail, config, folder):
             flights_found[key] = []
         flights_found[key].append(flight_data)
 
+    print(f" Done! ({flight_count} flight emails)")
     return flights_found
 
 
@@ -521,46 +532,63 @@ def select_latest_flights(all_flights, processed):
     return to_forward, skipped
 
 
-def display_flight_summary(to_forward, skipped):
+def display_flight_summary(to_forward, skipped, all_flights):
     """Phase 3: Display what will be imported."""
     print("\n" + "=" * 60)
     print("  FLIGHT IMPORT SUMMARY")
     print("=" * 60)
 
-    if skipped:
-        print(f"\n  Skipped ({len(skipped)} already imported):")
-        for s in skipped[:5]:  # Show first 5
-            print(f"    - {s['confirmation']}: {s['reason']}")
-        if len(skipped) > 5:
-            print(f"    ... and {len(skipped) - 5} more")
+    # Show grouped emails
+    if all_flights:
+        print(f"\n  Found {len(all_flights)} unique booking(s):")
+        print("-" * 58)
 
-    if to_forward:
-        print(f"\n  Will import {len(to_forward)} flight(s):\n")
-        for i, flight in enumerate(to_forward, 1):
-            info = flight["flight_info"]
-            change_tag = " [UPDATED]" if flight.get("is_change") else ""
+        for conf_code, emails in sorted(all_flights.items()):
+            # Sort by date for display
+            emails_sorted = sorted(emails, key=lambda x: x["email_date"], reverse=True)
+            latest = emails_sorted[0]
+            info = latest["flight_info"]
 
-            print(f"  {i}. {flight['airline']}{change_tag}")
-            print(f"     Confirmation: {flight['confirmation'] or 'Unknown'}")
+            # Check if this one will be forwarded or skipped
+            is_skipped = any(s["confirmation"] == conf_code for s in skipped)
+            will_forward = any(f["confirmation"] == conf_code for f in to_forward)
+            is_update = will_forward and any(f.get("is_change") and f["confirmation"] == conf_code for f in to_forward)
 
+            status = ""
+            if is_skipped:
+                status = " [SKIP - already imported]"
+            elif is_update:
+                status = " [UPDATE]"
+            elif will_forward:
+                status = " [NEW]"
+
+            # Build route string
+            route = ""
             if info.get("airports"):
                 route = " -> ".join(info["airports"][:2])
-                print(f"     Route: {route}")
 
-            if info.get("dates"):
-                print(f"     Date: {info['dates'][0]}")
+            date_str = info["dates"][0] if info.get("dates") else "Unknown date"
 
+            print(f"\n  {conf_code}{status}")
+            if route:
+                print(f"    Route: {route}")
+            print(f"    Date: {date_str}")
             if info.get("flight_numbers"):
-                print(f"     Flight(s): {', '.join(info['flight_numbers'])}")
+                print(f"    Flight: {', '.join(info['flight_numbers'][:2])}")
 
-            if flight.get("email_count", 1) > 1:
-                print(f"     (Latest of {flight['email_count']} emails)")
+            if len(emails) > 1:
+                print(f"    Emails: {len(emails)} found (using latest from {latest['email_date'].strftime('%m/%d %I:%M%p')})")
+            else:
+                print(f"    Email: {latest['email_date'].strftime('%m/%d/%Y %I:%M%p')}")
 
-            print()
-    else:
-        print("\n  No new flights to import.\n")
+        print("\n" + "-" * 58)
 
-    print("=" * 60)
+    # Summary counts
+    print(f"\n  Summary:")
+    print(f"    New flights to import: {len(to_forward)}")
+    print(f"    Already imported:      {len(skipped)}")
+
+    print("\n" + "=" * 60)
     return len(to_forward) > 0
 
 
@@ -663,8 +691,7 @@ def run(dry_run=False):
         to_forward, skipped = select_latest_flights(all_flights, processed)
 
         # Phase 3: Display summary
-        print(f"\n[Phase 3] Summary...")
-        has_flights = display_flight_summary(to_forward, skipped)
+        has_flights = display_flight_summary(to_forward, skipped, all_flights)
 
         # Phase 4: Forward to Flighty
         if has_flights:
