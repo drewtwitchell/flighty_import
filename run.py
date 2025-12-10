@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.8"
+VERSION = "1.8.9"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -740,20 +740,24 @@ Subject: {subject}
     if html_body:
         forward_msg.attach(MIMEText(html_body, 'html'))
 
-    retry_delays = [10, 20, 30, 45, 60]  # Longer delays for rate limiting
+    retry_delays = [15, 30, 60, 90, 120]  # Much longer delays for AOL rate limiting
     max_retries = len(retry_delays) + 1  # 6 total attempts
 
     for attempt in range(max_retries):
         try:
-            with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=60) as server:
+            with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=90) as server:
                 server.starttls()
                 server.login(config['email'], config['password'])
                 server.send_message(forward_msg)
             return True
         except Exception as e:
             error_msg = str(e).lower()
-            # Check if it's a rate limit or temporary error
-            is_rate_limit = any(x in error_msg for x in ['rate', 'limit', 'too many', '421', '450', '451', '452', '554'])
+            # Check if it's a rate limit, connection, or temporary error
+            is_rate_limit = any(x in error_msg for x in [
+                'rate', 'limit', 'too many', 'try again', 'temporarily',
+                '421', '450', '451', '452', '454', '554',
+                'connection', 'closed', 'reset', 'timeout', 'refused'
+            ])
 
             if attempt < max_retries - 1:
                 wait_time = retry_delays[attempt]
@@ -1213,17 +1217,25 @@ def forward_flights(config, to_forward, processed, dry_run):
     for idx, flight in enumerate(to_forward):
         try:
             # Delay between sends to avoid rate limiting (except first one)
+            # AOL is very strict - need longer delays
             if idx > 0 and not dry_run:
-                time.sleep(5)
+                time.sleep(8)
 
-            conf = flight.get('confirmation') or 'Unknown'
+            conf = flight.get('confirmation') or '------'
             info = flight.get('flight_info', {})
 
-            # Build compact status line
+            # Build compact status line - filter to valid airports only
             airports = info.get("airports", [])
-            route = " → ".join(airports[:2]) if airports else "?"
+            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+            route = " → ".join(valid_airports[:2]) if valid_airports else ""
 
-            print(f"  [{idx + 1}/{total}] {conf}  {route}  ", end="", flush=True)
+            # Build display line
+            display = f"  [{idx + 1}/{total}] {conf}"
+            if route:
+                display += f"  {route}"
+            display += "  "
+
+            print(display, end="", flush=True)
 
             if dry_run:
                 print("(dry run)")
