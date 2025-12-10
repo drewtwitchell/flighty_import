@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.9.8"
+VERSION = "1.9.9"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -500,8 +500,13 @@ def extract_confirmation_code(subject, body):
     return None
 
 
-def extract_flight_info(body):
-    """Extract flight information from email body with error handling."""
+def extract_flight_info(body, email_date=None):
+    """Extract flight information from email body with error handling.
+
+    Args:
+        body: Email body text
+        email_date: datetime when email was sent (used to determine year for dates without year)
+    """
     info = {
         "airports": [],
         "flight_numbers": [],
@@ -566,7 +571,14 @@ def extract_flight_info(body):
 
         # Extract dates - prioritize dates WITH year, then add year to those without
         try:
-            current_year = datetime.now().year
+            # Use email date's year if available, otherwise current year
+            # This is critical for historical emails - a 2024 email saying "March 15"
+            # means March 15, 2024 - not 2025!
+            if email_date and hasattr(email_date, 'year'):
+                base_year = email_date.year
+            else:
+                base_year = datetime.now().year
+
             dates_with_year = []
             dates_without_year = []
 
@@ -590,7 +602,7 @@ def extract_flight_info(body):
                     if m and m not in dates_with_year and len(m) > 5:
                         dates_with_year.append(m)
 
-            # Patterns without year (will add current year)
+            # Patterns without year (will add year based on email date)
             no_year_patterns = [
                 # "Sun, Dec 07" or "Sunday, December 7"
                 r'([A-Z][a-z]{2,8},?\s+[A-Z][a-z]{2,8}\s+\d{1,2})(?!\d|,?\s*\d{4})',
@@ -601,9 +613,9 @@ def extract_flight_info(body):
                 matches = re.findall(pattern, body)
                 for m in matches:
                     m = m.strip()
-                    # Add current year if not already have enough dates with year
+                    # Add year based on email date (not current year!)
                     if m and len(dates_with_year) < 3:
-                        date_with_year = f"{m}, {current_year}"
+                        date_with_year = f"{m}, {base_year}"
                         if date_with_year not in dates_with_year:
                             dates_without_year.append(date_with_year)
 
@@ -1208,13 +1220,15 @@ def scan_for_flights(mail, config, folder, processed):
             body, html_body = get_email_body(msg)
             full_body = body or html_body or ""
 
+            # Parse email date first - needed for correct year on flight dates
+            email_date = parse_email_date(date_str)
+
             # Extract confirmation code
             confirmation = extract_confirmation_code(subject, full_body)
             content_hash = generate_content_hash(subject, full_body)
 
-            # Extract flight details
-            flight_info = extract_flight_info(full_body)
-            email_date = parse_email_date(date_str)
+            # Extract flight details (pass email_date so we use correct year)
+            flight_info = extract_flight_info(full_body, email_date=email_date)
 
             # Build display string for this flight
             conf_display = confirmation if confirmation else "------"
