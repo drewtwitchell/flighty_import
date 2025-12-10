@@ -19,9 +19,11 @@ from .parser import (
 )
 from .email_handler import decode_header_value, get_email_body, parse_email_date
 
-# Rate limiting settings
-IMAP_BATCH_DELAY = 0.1  # Delay between batch operations (seconds)
-IMAP_SEARCH_DELAY = 0.05  # Delay between individual searches (seconds)
+# Rate limiting settings - conservative to avoid server blocks
+IMAP_BATCH_DELAY = 0.2  # Delay between batch operations (seconds)
+IMAP_SEARCH_DELAY = 0.1  # Delay between individual searches (seconds)
+IMAP_RETRY_DELAY = 5  # Delay before retrying failed operations (seconds)
+IMAP_MAX_RETRIES = 3  # Maximum retries for failed operations
 
 
 # Combine all searches into groups for batch OR queries
@@ -58,52 +60,130 @@ SUBJECT_KEYWORDS = [
 ]
 
 
-def _batch_search(mail, since_date, search_terms, batch_size=10, verbose=True):
-    """Execute searches in batches using OR queries for speed.
+def _imap_search_with_retry(mail, criteria, max_retries=IMAP_MAX_RETRIES):
+    """Execute IMAP search with retry logic for transient failures.
+
+    Args:
+        mail: IMAP connection
+        criteria: Search criteria string
+        max_retries: Maximum number of retries
+
+    Returns:
+        Set of email IDs found, or empty set on failure
+    """
+    for attempt in range(max_retries):
+        try:
+            result, data = mail.search(None, criteria)
+            if result == 'OK' and data[0]:
+                return set(data[0].split())
+            return set()
+        except Exception as e:
+            if attempt < max_retries - 1:
+                time.sleep(IMAP_RETRY_DELAY)
+            # Last attempt failed, return empty
+    return set()
+
+
+def _build_or_query(terms, field="FROM"):
+    """Build an IMAP OR query from multiple terms.
+
+    IMAP OR syntax: OR (FROM "a") (FROM "b") for 2 terms
+    For 3+ terms: OR (FROM "a") (OR (FROM "b") (FROM "c"))
+
+    Args:
+        terms: List of search terms
+        field: IMAP field to search (FROM, SUBJECT, etc.)
+
+    Returns:
+        IMAP search query string
+    """
+    if not terms:
+        return None
+    if len(terms) == 1:
+        return f'({field} "{terms[0]}")'
+
+    # Build nested OR query
+    query = f'({field} "{terms[-1]}")'
+    for term in reversed(terms[:-1]):
+        query = f'(OR ({field} "{term}") {query})'
+    return query
+
+
+def _optimized_search(mail, since_date, verbose=True):
+    """Execute optimized searches using combined OR queries.
+
+    Instead of 55+ individual searches, we combine them into ~5 OR queries.
+    This reduces IMAP roundtrips from 55 to about 5, dramatically improving speed.
 
     Args:
         mail: IMAP connection
         since_date: Date string for SINCE filter
-        search_terms: List of (name, query) tuples
-        batch_size: Number of queries to OR together
         verbose: Print progress updates
 
     Returns:
-        Set of email IDs and list of source names found
+        Set of email IDs and dict of sources found
     """
     all_ids = set()
-    found_sources = []
-    total_searches = len(search_terms)
-    completed = 0
+    sources = {}
 
-    # Group search terms into batches
-    for i in range(0, len(search_terms), batch_size):
-        batch = search_terms[i:i + batch_size]
+    # Strategy: Combine searches into groups using OR queries
+    # This reduces roundtrips from 55+ to about 5
 
-        for name, query in batch:
-            try:
-                result, data = mail.search(None, f'(SINCE {since_date} {query})')
-                if result == 'OK' and data[0]:
-                    ids = data[0].split()
+    search_groups = [
+        ("Airlines (US)", AIRLINE_DOMAINS[:15], "FROM"),  # Major US + some international
+        ("Airlines (Intl)", AIRLINE_DOMAINS[15:30], "FROM"),  # More international
+        ("Booking Sites", AIRLINE_DOMAINS[30:], "FROM"),  # Booking sites + corporate
+        ("Airline Keywords", AIRLINE_KEYWORDS, "FROM"),  # Partial matches
+        ("Subject Keywords", SUBJECT_KEYWORDS, "SUBJECT"),  # Subject searches
+    ]
+
+    total_groups = len(search_groups)
+
+    for idx, (group_name, terms, field) in enumerate(search_groups):
+        if verbose:
+            print(f"\r    Searching {group_name}... ({idx+1}/{total_groups})", end="", flush=True)
+
+        if not terms:
+            continue
+
+        # Build combined OR query
+        or_query = _build_or_query(terms, field)
+        if not or_query:
+            continue
+
+        criteria = f'(SINCE {since_date} {or_query})'
+
+        try:
+            ids = _imap_search_with_retry(mail, criteria)
+            if ids:
+                new_ids = ids - all_ids
+                if new_ids:
+                    all_ids.update(new_ids)
+                    sources[group_name] = len(new_ids)
+        except Exception:
+            # If combined query fails, fall back to individual searches
+            if verbose:
+                print(f" (using fallback)", end="", flush=True)
+
+            for term in terms:
+                try:
+                    criteria = f'(SINCE {since_date} ({field} "{term}"))'
+                    ids = _imap_search_with_retry(mail, criteria)
                     if ids:
-                        new_ids = set(ids) - all_ids
+                        new_ids = ids - all_ids
                         if new_ids:
                             all_ids.update(new_ids)
-                            found_sources.append(f"{name}({len(new_ids)})")
+                            sources[group_name] = sources.get(group_name, 0) + len(new_ids)
+                    time.sleep(IMAP_SEARCH_DELAY)
+                except Exception:
+                    pass
 
-                # Rate limiting between searches
-                time.sleep(IMAP_SEARCH_DELAY)
-            except Exception:
-                pass
-
-            completed += 1
-            if verbose and completed % 10 == 0:
-                print(f"\r    Searching... {completed}/{total_searches} queries ({len(all_ids)} emails found)", end="", flush=True)
-
-        # Small delay between batches
         time.sleep(IMAP_BATCH_DELAY)
 
-    return all_ids, found_sources
+    if verbose:
+        print()  # Newline after progress
+
+    return all_ids, sources
 
 
 def _fetch_headers_batch(mail, email_ids, batch_size=50, verbose=True):
@@ -201,6 +281,8 @@ def scan_for_flights(mail, config, folder, processed):
     already_processed = processed.get("confirmations", {})
     processed_hashes = processed.get("content_hashes", set())
 
+    folder_start = time.time()  # Track total time for this folder
+
     print()
     print(f"    Opening folder '{folder}'...", end="", flush=True)
     try:
@@ -216,61 +298,34 @@ def scan_for_flights(mail, config, folder, processed):
         return flights_found, skipped_confirmations
 
     since_date = (datetime.now() - timedelta(days=config['days_back'])).strftime("%d-%b-%Y")
-    print(f"    Searching emails since {since_date}...")
+    print(f"    Searching emails since {since_date} ({config['days_back']} days)")
 
     # ============================================
-    # STEP A: Server-side search
+    # STEP A: Server-side search (optimized with OR queries)
     # ============================================
     print()
     print("    Phase 1: Searching for airline/booking emails...")
+    print("    (Using optimized batch queries - this is much faster than before)")
 
-    all_email_ids = set()
-    found_sources = []
-    search_count = 0
-    total_searches = len(AIRLINE_DOMAINS) + len(AIRLINE_KEYWORDS) + len(SUBJECT_KEYWORDS)
+    search_start = time.time()
 
-    # Build search queries
-    search_queries = []
-    for domain in AIRLINE_DOMAINS:
-        search_queries.append((domain.split('.')[0].title(), f'FROM "{domain}"'))
-
-    for keyword in AIRLINE_KEYWORDS:
-        search_queries.append((f"{keyword.title()}+", f'FROM "{keyword}"'))
-
-    for keyword in SUBJECT_KEYWORDS:
-        search_queries.append((keyword.split()[0].title(), f'SUBJECT "{keyword}"'))
-
-    # Execute searches with rate limiting
-    for name, query in search_queries:
-        try:
-            result, data = mail.search(None, f'(SINCE {since_date} {query})')
-            if result == 'OK' and data[0]:
-                ids = data[0].split()
-                if ids:
-                    new_ids = set(ids) - all_email_ids
-                    if new_ids:
-                        all_email_ids.update(new_ids)
-                        found_sources.append(f"{name}({len(new_ids)})")
-            time.sleep(IMAP_SEARCH_DELAY)  # Rate limit
-        except Exception:
-            pass
-
-        search_count += 1
-        if search_count % 10 == 0:
-            print(f"\r    Phase 1: Searching... {search_count}/{total_searches} ({len(all_email_ids)} found)", end="", flush=True)
+    # Use optimized search with combined OR queries
+    # This reduces ~55 individual searches to ~5 combined queries
+    all_email_ids, sources = _optimized_search(mail, since_date, verbose=True)
 
     email_ids = list(all_email_ids)
     total = len(email_ids)
+    search_time = time.time() - search_start
 
-    print(f"\r    Phase 1: Complete - found {total} potential emails from {len(found_sources)} sources")
+    print(f"    Phase 1: Complete - found {total} potential emails ({search_time:.1f}s)")
 
     if total == 0:
         print("    No emails found from airlines or booking sites.")
         return flights_found, skipped_confirmations
 
-    if found_sources:
-        top_sources = found_sources[:5]
-        print(f"    Top sources: {', '.join(top_sources)}" + (f" +{len(found_sources)-5} more" if len(found_sources) > 5 else ""))
+    if sources:
+        source_list = [f"{name}: {count}" for name, count in sources.items()]
+        print(f"    Sources: {', '.join(source_list)}")
 
     # ============================================
     # STEP B: Quick header check (batch fetch)
@@ -303,7 +358,7 @@ def scan_for_flights(mail, config, folder, processed):
         return flights_found, skipped_confirmations
 
     # ============================================
-    # STEP C: Download full emails
+    # STEP C: Download full emails (with retry logic)
     # ============================================
     print()
     print(f"    Phase 3: Downloading {len(flight_candidates)} flight emails...")
@@ -312,26 +367,38 @@ def scan_for_flights(mail, config, folder, processed):
     flight_count = 0
     skipped_count = 0
     download_count = 0
+    failed_downloads = 0
 
     for candidate in flight_candidates:
         download_count += 1
+        email_id = candidate['email_id']
+
+        # Progress update
+        if download_count % 5 == 0 or download_count == len(flight_candidates):
+            print(f"\r    Phase 3: Downloading... {download_count}/{len(flight_candidates)}", end="", flush=True)
+
+        # Try to fetch with retry logic
+        raw_email = None
+        for attempt in range(IMAP_MAX_RETRIES):
+            try:
+                result, msg_data = mail.fetch(email_id, '(RFC822)')
+                time.sleep(IMAP_SEARCH_DELAY)  # Rate limit
+
+                if result == 'OK' and msg_data and msg_data[0]:
+                    raw_email = msg_data[0][1]
+                    if raw_email:
+                        break
+
+            except Exception as e:
+                if attempt < IMAP_MAX_RETRIES - 1:
+                    time.sleep(IMAP_RETRY_DELAY)
+                else:
+                    failed_downloads += 1
+
+        if not raw_email:
+            continue
+
         try:
-            email_id = candidate['email_id']
-
-            # Progress update
-            if download_count % 5 == 0 or download_count == len(flight_candidates):
-                print(f"\r    Phase 3: Downloading... {download_count}/{len(flight_candidates)}", end="", flush=True)
-
-            result, msg_data = mail.fetch(email_id, '(RFC822)')
-            time.sleep(IMAP_SEARCH_DELAY)  # Rate limit
-
-            if result != 'OK' or not msg_data or not msg_data[0]:
-                continue
-
-            raw_email = msg_data[0][1]
-            if not raw_email:
-                continue
-
             msg = email.message_from_bytes(raw_email)
             from_addr = candidate['from_addr']
             subject = candidate['subject']
@@ -376,15 +443,18 @@ def scan_for_flights(mail, config, folder, processed):
             flights_found[key].append(flight_data)
 
         except Exception:
+            failed_downloads += 1
             continue
 
     download_time = time.time() - download_start
-    total_time = time.time() - scan_start
+    total_time = time.time() - folder_start
 
     print(f"\r    Phase 3: Complete - downloaded {download_count} emails ({download_time:.1f}s)")
     print()
     print(f"    Summary: {flight_count} new flights, {skipped_count} already imported")
-    print(f"    Total scan time: {total_time:.1f}s")
+    if failed_downloads > 0:
+        print(f"    Note: {failed_downloads} emails failed to download (will retry on next run)")
+    print(f"    Total folder scan time: {total_time:.1f}s")
 
     return flights_found, skipped_confirmations
 
