@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.9.1"
+VERSION = "1.9.2"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -38,7 +38,12 @@ def auto_update():
     import urllib.request
     import urllib.error
 
-    print("\n=== Checking for updates ===")
+    print()
+    print("=" * 60)
+    print("  STEP 1 OF 5: CHECKING FOR UPDATES")
+    print("=" * 60)
+    print()
+    print("  Connecting to GitHub to check if a newer version exists...")
 
     try:
         # Get latest version from GitHub
@@ -60,12 +65,13 @@ def auto_update():
                     latest_version = VERSION
 
         if latest_version == VERSION:
-            print(f"Already up to date! (v{VERSION})")
+            print(f"  You have the latest version (v{VERSION})")
             print()
             return False
 
-        print(f"Update available: v{VERSION} -> v{latest_version}")
-        print("Downloading updates...", end="", flush=True)
+        print(f"  Update available: v{VERSION} -> v{latest_version}")
+        print()
+        print("  Downloading new version from GitHub...", end="", flush=True)
 
         # Download updated files
         updated = False
@@ -83,20 +89,23 @@ def auto_update():
                 print(f" (failed: {filename})", end="", flush=True)
 
         if updated:
-            print(f"\nUpdated to v{latest_version}! Restarting...")
+            print()
+            print(f"  Updated to v{latest_version}!")
+            print("  Restarting with new version...")
             print()
             return True
         else:
-            print("\nUpdate failed - continuing with current version")
+            print()
+            print("  Update failed - continuing with current version")
             print()
             return False
 
     except urllib.error.URLError:
-        print("No internet connection - skipping update check")
+        print("  No internet connection - skipping update check")
         print()
         return False
     except Exception as e:
-        print(f"Could not check for updates - continuing")
+        print("  Could not check for updates - continuing with current version")
         print()
         return False
 
@@ -961,11 +970,13 @@ def scan_for_flights(mail, config, folder, processed):
     total = len(email_ids)
 
     if total == 0:
-        print("no matching emails found")
+        print("    No matching emails found in this folder.")
         return flights_found, skipped_confirmations
 
-    print(f"\n    Found {total} potential flight emails")
-    print(f"    Now checking each one for flight confirmations...")
+    print()
+    print(f"    Found {total} emails that might contain flight info.")
+    print(f"    Now examining each one to find actual flight confirmations...")
+    print(f"    (This may take a minute for large mailboxes)")
     print()
 
     flight_count = 0
@@ -1052,7 +1063,10 @@ def scan_for_flights(mail, config, folder, processed):
             continue
 
     print(f"\r    Scan complete!" + " " * 50)
-    print(f"    Results: {flight_count} new flights found, {skipped_count} already imported")
+    print()
+    print(f"    Results for this folder:")
+    print(f"      - New flight confirmations found: {flight_count}")
+    print(f"      - Already imported (skipped):     {skipped_count}")
 
     return flights_found, skipped_confirmations
 
@@ -1112,10 +1126,9 @@ def display_previously_imported(processed):
     count = len(confirmations)
 
     print()
-    print("=" * 60)
-    print(f"  PREVIOUSLY IMPORTED ({count} flights)")
-    print("=" * 60)
-    print("  These flights were already sent to Flighty and will be skipped:\n")
+    print("  -" * 30)
+    print(f"  Previously imported flights ({count} total):")
+    print()
 
     for conf_code, data in sorted(confirmations.items()):
         airports = data.get("airports", [])
@@ -1147,7 +1160,7 @@ def display_previously_imported(processed):
                 date_str = d
 
         # Build the display line - only include valid parts
-        line = f"  {conf_code}"
+        line = f"    {conf_code}"
         if route:
             line += f"  {route}"
         if flight_str:
@@ -1157,6 +1170,7 @@ def display_previously_imported(processed):
 
         print(line)
 
+    print("  -" * 30)
     print()
 
 
@@ -1166,9 +1180,9 @@ def display_new_flights(to_forward):
         return
 
     print()
-    print("=" * 60)
-    print(f"  NEW FLIGHTS TO IMPORT ({len(to_forward)})")
-    print("=" * 60)
+    print("  -" * 30)
+    print(f"  NEW FLIGHTS FOUND: {len(to_forward)}")
+    print("  These will now be sent to Flighty:")
     print()
 
     for flight in to_forward:
@@ -1200,7 +1214,7 @@ def display_new_flights(to_forward):
             if any(m in d for m in months) or '/' in d or '-' in d:
                 date_str = d
 
-        line = f"  {conf}"
+        line = f"    {conf}"
         if route:
             line += f"  {route}"
         if flight_str:
@@ -1210,6 +1224,7 @@ def display_new_flights(to_forward):
 
         print(line)
 
+    print("  -" * 30)
     print()
 
 
@@ -1227,14 +1242,22 @@ def forward_flights(config, to_forward, processed, dry_run):
 
     print()
     print("=" * 60)
-    print("  FORWARDING TO FLIGHTY")
+    print("  SENDING EMAILS TO FLIGHTY")
     print("=" * 60)
     print()
-    print(f"  Sending {total} flight emails to Flighty...")
+    print(f"  Total to send: {total} flight confirmation emails")
     print()
-    print("  NOTE: Email providers (especially AOL/Yahoo) limit how fast you")
-    print("  can send emails. If we hit their limit, we'll automatically wait")
-    print("  and retry. This may take a while for large batches.")
+    print("  HOW THIS WORKS:")
+    print("  - Each flight email is forwarded to Flighty one at a time")
+    print("  - There's an 8-second delay between each send to avoid spam filters")
+    print()
+    print("  IMPORTANT - PLEASE BE PATIENT:")
+    print("  - Email providers (AOL, Yahoo, Gmail, etc.) limit sending speed")
+    print("  - If we send too fast, they temporarily block us")
+    print("  - When blocked, we wait and automatically retry (up to 5 minutes)")
+    print("  - Large batches may take 10-30+ minutes - this is normal!")
+    print()
+    print("  Do not close this window - your progress is saved after each send.")
     print()
     print("-" * 60)
 
@@ -1347,38 +1370,70 @@ def run(dry_run=False, days_override=None):
     if days_override:
         config['days_back'] = days_override
 
-    # Header
+    # STEP 2: CONFIGURATION
     print()
     print("=" * 60)
-    print("  FLIGHTY EMAIL FORWARDER")
+    print("  STEP 2 OF 5: LOADING YOUR SETTINGS")
     print("=" * 60)
-    print(f"\n  Account:     {config['email']}")
-    print(f"  Forward to:  {config['flighty_email']}")
-    print(f"  Looking back: {config['days_back']} days")
+    print()
+    print(f"  Email account:  {config['email']}")
+    print(f"  Forward to:     {config['flighty_email']}")
+    print(f"  Search period:  Last {config['days_back']} days of emails")
     if dry_run:
-        print(f"  Mode:        DRY RUN (no emails will be sent)")
+        print()
+        print("  *** DRY RUN MODE - No emails will actually be sent ***")
+    print()
+    print("  Settings loaded successfully!")
 
-    # Load processed flights and show what's already been imported
+    # STEP 3: LOAD HISTORY
+    print()
+    print("=" * 60)
+    print("  STEP 3 OF 5: CHECKING WHAT'S ALREADY IMPORTED")
+    print("=" * 60)
+    print()
+    print("  Loading your import history to avoid duplicates...")
     processed = load_processed_flights()
-    display_previously_imported(processed)
+    prev_count = len(processed.get("confirmations", {}))
+    if prev_count > 0:
+        print(f"  Found {prev_count} flights that were previously sent to Flighty.")
+        print("  These will be skipped to avoid duplicates.")
+        display_previously_imported(processed)
+    else:
+        print("  No previous imports found - this appears to be your first run!")
+        print()
 
-    # Connect to email
+    # STEP 4: CONNECT TO EMAIL
+    print()
+    print("=" * 60)
+    print("  STEP 4 OF 5: CONNECTING TO YOUR EMAIL")
+    print("=" * 60)
+    print()
+    print(f"  Connecting to {config['imap_server']}...")
     mail = connect_imap(config)
     if not mail:
+        print()
+        print("  *** CONNECTION FAILED ***")
+        print("  Please check your email and password in config.json")
+        print("  Or run 'python3 setup.py' to reconfigure.")
         return
+    print("  Connected successfully!")
 
     try:
         folders = config.get('check_folders', ['INBOX'])
 
-        # SCANNING section
+        # STEP 5: SCANNING section
         print()
         print("=" * 60)
-        print("  SCANNING FOR NEW FLIGHTS")
+        print("  STEP 5 OF 5: SCANNING YOUR EMAILS")
         print("=" * 60)
+        print()
+        print("  Now searching your email for flight confirmations...")
+        print("  This checks emails from airlines, booking sites, and travel agencies.")
+        print()
 
         all_flights = {}
         for folder in folders:
-            print(f"\n  Folder: {folder}")
+            print(f"  Scanning folder: {folder}")
             folder_flights, _ = scan_for_flights(mail, config, folder, processed)
             for conf, emails in folder_flights.items():
                 if conf in all_flights:
@@ -1390,32 +1445,37 @@ def run(dry_run=False, days_override=None):
         to_forward, skipped = select_latest_flights(all_flights, processed)
 
         # Show new flights to import
-        display_new_flights(to_forward)
-
-        # Forward to Flighty
         if to_forward:
+            display_new_flights(to_forward)
+
+            # Forward to Flighty
             forwarded = forward_flights(config, to_forward, processed, dry_run)
 
-            # DONE section
+            # COMPLETE section
             print()
             print("=" * 60)
-            print("  DONE!")
+            print("  ALL DONE!")
             print("=" * 60)
             print()
-            print(f"  Forwarded:  {forwarded} new flights")
-            print(f"  Skipped:    {len(processed.get('confirmations', {}))} previously imported")
+            print("  Summary:")
+            print(f"    - Sent to Flighty:      {forwarded} new flights")
+            print(f"    - Already in Flighty:   {len(processed.get('confirmations', {})) - forwarded} previously imported")
             print()
-            print("  Run again anytime to check for new flight emails.")
+            print("  Your flights should now appear in Flighty!")
+            print("  Run this script again anytime to check for new flight emails.")
             print()
         else:
+            # No new flights
             print()
             print("=" * 60)
-            print("  DONE!")
+            print("  ALL DONE!")
             print("=" * 60)
             print()
-            print("  No new flights to import.")
+            print("  No new flight confirmations found.")
             print()
-            print("  Run again anytime to check for new flight emails.")
+            if prev_count > 0:
+                print(f"  You already have {prev_count} flights imported to Flighty.")
+            print("  Run this script again anytime to check for new flight emails.")
             print()
 
     except Exception as e:
