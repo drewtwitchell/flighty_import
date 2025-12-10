@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.6"
+VERSION = "1.8.7"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -138,13 +138,28 @@ def load_airport_codes():
 ALL_AIRPORT_CODES, AIRPORT_NAMES_FROM_FILE = load_airport_codes()
 
 # Common English words that happen to be 3 letters - exclude these
+# These cause false positives when parsing email text
 EXCLUDED_CODES = {
+    # Common words
     'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HAD',
     'HER', 'WAS', 'ONE', 'OUR', 'OUT', 'DAY', 'GET', 'HAS', 'HIM', 'HIS',
     'HOW', 'ITS', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 'BOY',
     'DID', 'SAY', 'SHE', 'TOO', 'USE', 'AIR', 'FLY', 'RUN', 'TRY', 'CAR',
     'END', 'PRE', 'PRO', 'VIA', 'PER', 'NET', 'WEB', 'APP', 'API', 'URL',
     'USA', 'CRO', 'CSS', 'PHP', 'SQL', 'XML', 'PDF', 'JPG', 'PNG', 'GIF',
+    # More common words that appear in emails
+    'ADD', 'AGO', 'ANY', 'ASK', 'BAD', 'BAG', 'BIG', 'BIT', 'BOX', 'BUS',
+    'BUY', 'CUT', 'DOC', 'DUE', 'EAT', 'FAR', 'FAX', 'FEW', 'FIT', 'FUN',
+    'GOT', 'GUN', 'GUY', 'HOT', 'JOB', 'KEY', 'KID', 'LAW', 'LAY', 'LED',
+    'LET', 'LIE', 'LOG', 'LOT', 'LOW', 'MAN', 'MAP', 'MEN', 'MET', 'MIX',
+    'MOM', 'NOR', 'ODD', 'OFF', 'OIL', 'PAY', 'PEN', 'PET', 'PIN', 'POP',
+    'POT', 'PUT', 'RAW', 'RED', 'REF', 'RID', 'ROW', 'SAT', 'SET', 'SIT',
+    'SIX', 'SKY', 'SON', 'SUM', 'SUN', 'TAX', 'TEN', 'TIP', 'TOP', 'TOY',
+    'TWO', 'VAN', 'WAR', 'WAS', 'WET', 'WIN', 'WON', 'YES', 'YET', 'ZIP',
+    # Email/travel specific words that aren't airports
+    'COM', 'ORG', 'EDU', 'GOV', 'MIL', 'BIZ', 'INFO',
+    'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN',  # Days
+    'JAN', 'FEB', 'MAR', 'APR', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',  # Months
 }
 
 # Use all codes except excluded words
@@ -1071,36 +1086,59 @@ def display_previously_imported(processed):
     if not confirmations:
         return
 
-    print()
-    print("=" * 60)
-    print("  PREVIOUSLY IMPORTED")
-    print("=" * 60)
-    print("  These flights were already sent to Flighty and will be skipped:\n")
-
-    for conf_code, data in sorted(confirmations.items()):
-        airports = data.get("airports", [])
-        dates = data.get("dates", [])
-        flight_nums = data.get("flight_numbers", [])
-
-        # Build compact display
-        if airports:
-            route = " → ".join(airports[:2])
-        else:
-            route = "Unknown"
-
-        flight_str = f"Flight {flight_nums[0]}" if flight_nums else ""
-        date_str = dates[0] if dates else ""
-
-        # Format: CONF   ROUTE        FLIGHT      DATE
-        parts = [f"  {conf_code}", route]
-        if flight_str:
-            parts.append(flight_str)
-        if date_str:
-            parts.append(date_str)
-
-        print("  ".join(parts))
+    count = len(confirmations)
 
     print()
+    print("=" * 60)
+    print(f"  PREVIOUSLY IMPORTED ({count} flights)")
+    print("=" * 60)
+
+    # If many flights, just show a summary
+    if count > 10:
+        print(f"\n  {count} flights already sent to Flighty - will be skipped.")
+        print(f"  (Run with --reset to clear history and re-import all)\n")
+
+        # Show just the confirmation codes in a compact format
+        codes = sorted(confirmations.keys())
+        codes_per_line = 8
+        print("  Confirmation codes:")
+        for i in range(0, len(codes), codes_per_line):
+            chunk = codes[i:i + codes_per_line]
+            print(f"    {', '.join(chunk)}")
+        print()
+    else:
+        # Show details for small number of flights
+        print("  These flights were already sent to Flighty and will be skipped:\n")
+
+        for conf_code, data in sorted(confirmations.items()):
+            airports = data.get("airports", [])
+            dates = data.get("dates", [])
+            flight_nums = data.get("flight_numbers", [])
+
+            # Filter out bad airport codes that were saved before exclusions were added
+            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+            # Build compact display
+            if valid_airports:
+                route = " → ".join(valid_airports[:2])
+            else:
+                route = ""
+
+            flight_str = f"Flight {flight_nums[0]}" if flight_nums else ""
+            date_str = dates[0] if dates else ""
+
+            # Format: CONF   ROUTE   FLIGHT   DATE
+            line = f"  {conf_code}"
+            if route:
+                line += f"  {route}"
+            if flight_str:
+                line += f"  {flight_str}"
+            if date_str:
+                line += f"  {date_str}"
+
+            print(line)
+
+        print()
 
 
 def display_new_flights(to_forward):
@@ -1122,21 +1160,26 @@ def display_new_flights(to_forward):
         dates = info.get("dates", [])
         flight_nums = info.get("flight_numbers", [])
 
-        if airports:
-            route = " → ".join(airports[:2])
+        # Filter to only valid airport codes
+        valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+        if valid_airports:
+            route = " → ".join(valid_airports[:2])
         else:
-            route = "Unknown"
+            route = ""
 
         flight_str = f"Flight {flight_nums[0]}" if flight_nums else ""
         date_str = dates[0] if dates else ""
 
-        parts = [f"  {conf}", route]
+        line = f"  {conf}"
+        if route:
+            line += f"  {route}"
         if flight_str:
-            parts.append(flight_str)
+            line += f"  {flight_str}"
         if date_str:
-            parts.append(date_str)
+            line += f"  {date_str}"
 
-        print("  ".join(parts))
+        print(line)
 
     print()
 
