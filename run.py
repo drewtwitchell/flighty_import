@@ -423,60 +423,53 @@ def scan_for_flights(mail, config, folder):
 
     since_date = (datetime.now() - timedelta(days=config['days_back'])).strftime("%d-%b-%Y")
 
-    # Search for airline emails server-side (MUCH faster than scanning all emails)
+    # Search for airline emails server-side - be specific to reduce false matches
     airline_searches = [
-        'FROM "jetblue"',
-        'FROM "delta"',
-        'FROM "united"',
-        'FROM "aa.com"',
-        'FROM "southwest"',
-        'FROM "alaskaair"',
-        'FROM "spirit"',
-        'FROM "flyfrontier"',
-        'FROM "hawaiianair"',
-        'FROM "aircanada"',
-        'FROM "britishairways"',
-        'FROM "lufthansa"',
-        'FROM "emirates"',
-        'SUBJECT "flight confirmation"',
-        'SUBJECT "booking confirmation"',
-        'SUBJECT "itinerary"',
-        'SUBJECT "e-ticket"',
+        ('JetBlue', 'FROM "jetblue.com"'),
+        ('Delta', 'FROM "delta.com"'),
+        ('United', 'FROM "united.com"'),
+        ('American', 'FROM "aa.com"'),
+        ('Southwest', 'FROM "southwest.com"'),
+        ('Alaska', 'FROM "alaskaair.com"'),
+        ('Spirit', 'FROM "spirit.com"'),
+        ('Frontier', 'FROM "flyfrontier.com"'),
+        ('Hawaiian', 'FROM "hawaiianairlines.com"'),
+        ('Air Canada', 'FROM "aircanada.com"'),
+        ('British Airways', 'FROM "britishairways.com"'),
+        ('Lufthansa', 'FROM "lufthansa.com"'),
+        ('Emirates', 'FROM "emirates.com"'),
     ]
 
     all_email_ids = set()
 
-    print(f"    Searching for flight emails...", end="", flush=True)
+    print(f"    Searching airlines: ", end="", flush=True)
 
-    for idx, search_term in enumerate(airline_searches):
+    for airline_name, search_term in airline_searches:
         try:
             result, data = mail.search(None, f'(SINCE {since_date} {search_term})')
             if result == 'OK' and data[0]:
                 ids = data[0].split()
-                all_email_ids.update(ids)
+                if ids:
+                    all_email_ids.update(ids)
+                    print(f"{airline_name}({len(ids)}) ", end="", flush=True)
         except:
-            pass  # Some searches may fail, that's OK
-
-        # Progress dots
-        if idx % 4 == 0:
-            print(".", end="", flush=True)
+            pass
 
     email_ids = list(all_email_ids)
     total = len(email_ids)
 
-    print(f" found {total} potential matches")
-
     if total == 0:
+        print("none found")
         return flights_found
+
+    print(f"\n    Found {total} airline emails, analyzing...", flush=True)
 
     flight_count = 0
 
-    print(f"    Processing", end="", flush=True)
-
     for idx, email_id in enumerate(email_ids):
-        # Show progress
-        if idx > 0 and idx % 5 == 0:
-            print(".", end="", flush=True)
+        # Show progress with percentage
+        pct = int((idx + 1) / total * 100)
+        print(f"\r    Analyzing: {idx + 1}/{total} ({pct}%)", end="", flush=True)
 
         # Fetch full email
         result, msg_data = mail.fetch(email_id, '(RFC822)')
@@ -527,7 +520,7 @@ def scan_for_flights(mail, config, folder):
             flights_found[key] = []
         flights_found[key].append(flight_data)
 
-    print(f" done! ({flight_count} confirmed)")
+    print(f"\r    Analyzing: {total}/{total} (100%) - {flight_count} flight confirmations found")
     return flights_found
 
 
