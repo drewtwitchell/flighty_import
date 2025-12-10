@@ -5,16 +5,17 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 ## Features
 
 - **Multi-platform** - Works on Mac, Windows, and Linux
-- **No dependencies** - Uses only Python standard library (no pip install needed)
+- **Auto-installs dependencies** - Automatically installs `python-dateutil` if needed (one-time)
 - **Auto-updates** - Automatically downloads the latest version when you run it
 - Connects to any email provider (AOL, Gmail, Yahoo, Outlook, iCloud, or custom IMAP)
 - Detects flight confirmations from 15+ airlines and booking sites
-- **Smart deduplication** - groups all emails by confirmation code, forwards only the latest
-- **Change detection** - if a flight is modified, automatically re-imports the updated version
-- **Crash protection** - saves progress after each email, recovers from errors automatically
-- **9,800+ airport codes** - full IATA database with common word filtering
-- Shows flight details including route, date with year, time, and flight number
-- Simple interactive setup - no coding required
+- **Optimized searching** - Uses combined IMAP queries for faster scanning
+- **Smart deduplication** - Groups all emails by confirmation code, forwards only the latest
+- **Same-day updates** - If you get multiple emails for the same flight, uses the most recent
+- **Change detection** - If a flight is modified, automatically re-imports the updated version
+- **Crash protection** - Saves progress after each email, recovers from errors automatically
+- **Rate limit handling** - Automatically retries when email providers throttle sending
+- **9,800+ airport codes** - Full IATA database with common word filtering
 
 ## How It Works
 
@@ -22,14 +23,46 @@ The script runs in 4 phases:
 
 1. **Update Check** - Checks GitHub for new version and auto-updates if available
 2. **Connect** - Connects to your email via IMAP
-3. **Scan** - Searches your email for flight confirmations
-4. **Forward** - Sends the selected emails to Flighty
+3. **Scan** - Searches your email for flight confirmations (optimized batch queries)
+4. **Forward** - Shows all found flights, then sends selected emails to Flighty
+
+### What You'll See
+
+```
+============================================================
+  SCAN RESULTS
+============================================================
+
+  ┌─ NEW FLIGHTS TO FORWARD: 3 ─────────────────────────────
+  │
+  │  NEW:
+  │    ABC123   AA100      JFK → LAX        2025-03-15
+  │    DEF456   UA200      SFO → ORD        2025-04-01
+  │
+  │  UPDATES (flight details changed):
+  │    GHI789   DL300      ATL → MIA        2025-05-20  [UPDATE]
+  │
+  └───────────────────────────────────────────────────────────
+
+  ┌─ ALREADY IN FLIGHTY: 12 ────────────────────────────────
+  │    XYZ999   LAX → JFK        2025-02-10
+  │    ...
+  └───────────────────────────────────────────────────────────
+
+  SUMMARY:
+    • New flights to forward:    3
+    • Already in Flighty:        12
+    • Duplicate emails merged:   4
+      (Multiple emails for same confirmation - using latest)
+```
 
 ## Supported Airlines & Booking Sites
 
-**Airlines:** JetBlue, Delta, United, American Airlines, Southwest, Alaska Airlines, Spirit, Frontier, Hawaiian Airlines, Air Canada, British Airways, Lufthansa, Emirates, Air France, KLM, Qantas, and 20+ more international carriers.
+**Airlines:** JetBlue, Delta, United, American Airlines, Southwest, Alaska Airlines, Spirit, Frontier, Hawaiian Airlines, Air Canada, British Airways, Lufthansa, Emirates, Air France, KLM, Qantas, Singapore Airlines, Cathay Pacific, and 20+ more international carriers.
 
-**Booking Sites:** Expedia, Kayak, Priceline, Orbitz, Google Travel, Hopper, and more.
+**Booking Sites:** Expedia, Kayak, Priceline, Orbitz, Google Travel, Hopper, Booking.com, Trip.com, and more.
+
+**Corporate Travel:** Concur, Egencia, TripActions, Navan
 
 ## Requirements
 
@@ -44,7 +77,7 @@ git clone https://github.com/drewtwitchell/flighty_import.git
 cd flighty_import
 ```
 
-No additional dependencies required - uses only Python standard library.
+That's it! The script will auto-install `python-dateutil` on first run if needed.
 
 ## Setup
 
@@ -98,6 +131,12 @@ See what emails would be forwarded without actually sending anything:
 python3 run.py --dry-run
 ```
 
+This shows you:
+- All flights that would be forwarded
+- The header information that will be injected (route, flight number, date)
+- Flights already in Flighty
+- Duplicate emails that were merged
+
 ### Normal Mode
 
 Find and forward flight emails to Flighty:
@@ -115,6 +154,25 @@ python3 run.py --days 365    # Search 1 year
 python3 run.py --days 180    # Search 6 months
 ```
 
+**Performance Note:** Searching 1 year typically takes:
+- 2-5 minutes if your email server supports batch queries (Gmail, Outlook, iCloud)
+- 10-15 minutes if fallback to individual searches is needed (AOL, Yahoo)
+
+## Upgrading
+
+The script auto-updates when you run it! It will:
+1. Check GitHub for a newer version
+2. Download all updated files
+3. Restart with the new version
+
+If you have an older version, just run `python3 run.py` and it will upgrade automatically.
+
+**Manual upgrade:**
+```bash
+cd flighty_import
+git pull
+```
+
 ## Project Structure
 
 ```
@@ -125,9 +183,10 @@ flighty_import/
 │   ├── airports.py         # Airport codes and display
 │   ├── airlines.py         # Airline detection patterns
 │   ├── config.py           # Configuration management
-│   ├── parser.py           # Flight info extraction
-│   ├── email_handler.py    # IMAP/SMTP handling
-│   ├── scanner.py          # Email scanning
+│   ├── deps.py             # Dependency auto-installation
+│   ├── parser.py           # Flight info extraction (uses dateutil)
+│   ├── email_handler.py    # IMAP/SMTP handling with retry logic
+│   ├── scanner.py          # Optimized email scanning
 │   └── setup.py            # Setup wizard
 ├── airport_codes.txt       # 9,800+ IATA airport codes
 ├── pyproject.toml          # Python packaging config
@@ -146,6 +205,7 @@ flighty_import/
 
 - Your credentials are stored locally in `config.json`
 - No data is sent anywhere except to your email provider and Flighty
+- No emails are stored locally - only scanned and forwarded
 - Sensitive files (`config.json`, `processed_flights.json`) are excluded from git
 
 ## Troubleshooting
@@ -159,6 +219,16 @@ flighty_import/
 - Check that you're searching the correct folder
 - Run with `--dry-run` to see what's being detected
 
+**Slow scanning**
+- Some email servers (AOL, Yahoo) don't support batch queries
+- The script will automatically fall back to individual searches
+- You'll see: "Note: Your email server required individual searches"
+
+**Rate limited / blocked**
+- Email providers limit how fast you can send
+- The script automatically waits and retries (up to 5 minutes)
+- Large batches (50+ flights) may take 10-30 minutes - this is normal
+
 **Want to re-import everything**
 - Run `python3 run.py --reset` to clear history
 - Then run `python3 run.py` to import all flights fresh
@@ -167,6 +237,10 @@ flighty_import/
 - Run `python3 run.py --clean` to remove any corrupt data files
 - Then run `python3 run.py` to start fresh
 - The script saves progress after each successful forward, so you won't lose data
+
+**Dependency installation failed**
+- The script tries to auto-install `python-dateutil`
+- If it fails, install manually: `pip install python-dateutil`
 
 ## Automation (Optional)
 
@@ -179,6 +253,15 @@ crontab -e
 # Run daily at 8am
 0 8 * * * cd /path/to/flighty_import && python3 run.py >> forwarder.log 2>&1
 ```
+
+## Version History
+
+- **v2.5.0** - Optimized IMAP searching (92% fewer queries), automatic fallback for all servers
+- **v2.4.0** - Comprehensive scan results display, same-day update handling
+- **v2.3.0** - Verbose progress output, IMAP rate limiting
+- **v2.2.0** - Added python-dateutil for robust date parsing, auto-installs dependencies
+- **v2.1.0** - Refactored to proper Python package structure
+- **v2.0.0** - Major rewrite with improved parsing and flight detection
 
 ## License
 

@@ -38,10 +38,25 @@ from flighty.deps import get_dateutil_parser  # Triggers auto-install if needed
 SCRIPT_DIR = Path(__file__).parent
 VERSION = __version__
 GITHUB_REPO = "drewtwitchell/flighty_import"
-UPDATE_FILES = ["run.py", "flighty/__init__.py", "flighty/airports.py",
-                "flighty/airlines.py", "flighty/config.py", "flighty/parser.py",
-                "flighty/email_handler.py", "flighty/scanner.py", "flighty/setup.py",
-                "flighty/deps.py", "airport_codes.txt"]
+# Files to download during auto-update (order matters - run.py last so it restarts with new code)
+UPDATE_FILES = [
+    # Package files
+    "flighty/__init__.py",
+    "flighty/airports.py",
+    "flighty/airlines.py",
+    "flighty/config.py",
+    "flighty/parser.py",
+    "flighty/email_handler.py",
+    "flighty/scanner.py",
+    "flighty/setup.py",
+    "flighty/deps.py",
+    # Data files
+    "airport_codes.txt",
+    "VERSION",
+    "pyproject.toml",
+    # Main script (last, triggers restart)
+    "run.py",
+]
 
 
 def auto_update():
