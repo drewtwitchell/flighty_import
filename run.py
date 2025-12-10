@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.1"
+VERSION = "1.8.2"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -210,17 +210,18 @@ def get_airport_display(code):
         return f"{code} ({short_name})"
     return code
 
-# Airline patterns to detect flight confirmation emails
+# Airline and booking site patterns to detect flight confirmation emails
 AIRLINE_PATTERNS = [
+    # Major US Airlines
     {
         "name": "JetBlue",
         "from_patterns": [r"jetblue", r"@.*jetblue\.com"],
-        "subject_patterns": [r"booking confirmation", r"itinerary", r"flight confirmation"],
+        "subject_patterns": [r"booking confirmation", r"itinerary", r"flight confirmation", r"confirmation"],
     },
     {
         "name": "Delta",
         "from_patterns": [r"delta", r"@.*delta\.com"],
-        "subject_patterns": [r"ereceipt", r"trip confirmation", r"itinerary", r"booking confirmation"],
+        "subject_patterns": [r"ereceipt", r"trip confirmation", r"itinerary", r"booking confirmation", r"confirmation"],
     },
     {
         "name": "United",
@@ -235,7 +236,7 @@ AIRLINE_PATTERNS = [
     {
         "name": "Southwest",
         "from_patterns": [r"southwest", r"@.*southwest\.com"],
-        "subject_patterns": [r"confirmation", r"itinerary", r"trip"],
+        "subject_patterns": [r"confirmation", r"itinerary", r"trip", r"flight"],
     },
     {
         "name": "Alaska Airlines",
@@ -257,6 +258,7 @@ AIRLINE_PATTERNS = [
         "from_patterns": [r"hawaiian", r"@.*hawaiianairlines\.com"],
         "subject_patterns": [r"confirmation", r"itinerary"],
     },
+    # International Airlines
     {
         "name": "Air Canada",
         "from_patterns": [r"aircanada", r"@.*aircanada\.com"],
@@ -278,6 +280,40 @@ AIRLINE_PATTERNS = [
         "subject_patterns": [r"confirmation", r"booking", r"itinerary"],
     },
     {
+        "name": "International Airline",
+        "from_patterns": [r"airfrance|klm|qantas|singapore|cathay|jal|ana|korean|turkish|qatar|etihad|virgin|icelandair|norwegian|ryanair|easyjet|westjet|avianca|latam|aeromexico|copa"],
+        "subject_patterns": [r"confirmation", r"booking", r"itinerary", r"e-?ticket"],
+    },
+    # Booking Sites
+    {
+        "name": "Expedia",
+        "from_patterns": [r"expedia"],
+        "subject_patterns": [r"confirmation", r"itinerary", r"trip", r"booking"],
+    },
+    {
+        "name": "Booking Site",
+        "from_patterns": [r"kayak|priceline|orbitz|travelocity|cheapoair|hopper|skyscanner|trip\.com|booking\.com"],
+        "subject_patterns": [r"confirmation", r"itinerary", r"trip", r"booking", r"flight"],
+    },
+    {
+        "name": "Google Travel",
+        "from_patterns": [r"google"],
+        "subject_patterns": [r"flight.*confirmation", r"trip.*confirmation", r"itinerary"],
+    },
+    # Corporate Travel
+    {
+        "name": "Corporate Travel",
+        "from_patterns": [r"concur|egencia|tripactions|navan"],
+        "subject_patterns": [r"confirmation", r"itinerary", r"trip", r"travel"],
+    },
+    # Credit Card Travel
+    {
+        "name": "Credit Card Travel",
+        "from_patterns": [r"chase|americanexpress|capitalone|citi"],
+        "subject_patterns": [r"flight.*confirmation", r"trip.*confirmation", r"travel.*confirmation", r"itinerary"],
+    },
+    # Generic catch-all for any flight-related email
+    {
         "name": "Generic Flight",
         "from_patterns": [r".*"],
         "subject_patterns": [
@@ -285,6 +321,8 @@ AIRLINE_PATTERNS = [
             r"booking.*confirmation.*flight",
             r"e-?ticket",
             r"itinerary.*flight",
+            r"your.*flight",
+            r"trip.*confirmation",
         ],
     }
 ]
@@ -432,7 +470,7 @@ def extract_confirmation_code(subject, body):
     match = re.search(r'\b([A-Z0-9]{6})\b', subject)
     if match:
         code = match.group(1)
-        if code not in FALSE_AIRPORT_CODES and not code.isdigit():
+        if code not in EXCLUDED_CODES and not code.isdigit():
             return code
 
     return None
@@ -750,8 +788,10 @@ def scan_for_flights(mail, config, folder, processed):
 
     since_date = (datetime.now() - timedelta(days=config['days_back'])).strftime("%d-%b-%Y")
 
-    # Search for airline emails server-side - be specific to reduce false matches
+    # Search for airline emails server-side
+    # Include airlines, booking sites, and travel agencies
     airline_searches = [
+        # Major US Airlines
         ('JetBlue', 'FROM "jetblue.com"'),
         ('Delta', 'FROM "delta.com"'),
         ('United', 'FROM "united.com"'),
@@ -761,26 +801,126 @@ def scan_for_flights(mail, config, folder, processed):
         ('Spirit', 'FROM "spirit.com"'),
         ('Frontier', 'FROM "flyfrontier.com"'),
         ('Hawaiian', 'FROM "hawaiianairlines.com"'),
+        # International Airlines
         ('Air Canada', 'FROM "aircanada.com"'),
         ('British Airways', 'FROM "britishairways.com"'),
         ('Lufthansa', 'FROM "lufthansa.com"'),
         ('Emirates', 'FROM "emirates.com"'),
+        ('Air France', 'FROM "airfrance.com"'),
+        ('KLM', 'FROM "klm.com"'),
+        ('Qantas', 'FROM "qantas.com"'),
+        ('Singapore', 'FROM "singaporeair.com"'),
+        ('Cathay', 'FROM "cathaypacific.com"'),
+        ('JAL', 'FROM "jal.com"'),
+        ('ANA', 'FROM "ana.co.jp"'),
+        ('Korean Air', 'FROM "koreanair.com"'),
+        ('Turkish', 'FROM "turkishairlines.com"'),
+        ('Qatar', 'FROM "qatarairways.com"'),
+        ('Etihad', 'FROM "etihad.com"'),
+        ('Virgin', 'FROM "virginatlantic.com"'),
+        ('Icelandair', 'FROM "icelandair.com"'),
+        ('Norwegian', 'FROM "norwegian.com"'),
+        ('Ryanair', 'FROM "ryanair.com"'),
+        ('EasyJet', 'FROM "easyjet.com"'),
+        ('WestJet', 'FROM "westjet.com"'),
+        ('Avianca', 'FROM "avianca.com"'),
+        ('LATAM', 'FROM "latam.com"'),
+        ('Aeromexico', 'FROM "aeromexico.com"'),
+        ('Copa', 'FROM "copaair.com"'),
+        # Booking Sites
+        ('Expedia', 'FROM "expedia.com"'),
+        ('Kayak', 'FROM "kayak.com"'),
+        ('Priceline', 'FROM "priceline.com"'),
+        ('Orbitz', 'FROM "orbitz.com"'),
+        ('Travelocity', 'FROM "travelocity.com"'),
+        ('CheapOair', 'FROM "cheapoair.com"'),
+        ('Hopper', 'FROM "hopper.com"'),
+        ('Google', 'FROM "google.com"'),
+        ('Booking', 'FROM "booking.com"'),
+        ('Trip.com', 'FROM "trip.com"'),
+        ('Skyscanner', 'FROM "skyscanner.com"'),
+        # Corporate Travel
+        ('Concur', 'FROM "concur.com"'),
+        ('Egencia', 'FROM "egencia.com"'),
+        ('TripActions', 'FROM "tripactions.com"'),
+        ('Navan', 'FROM "navan.com"'),
+        # Credit Card Travel
+        ('Chase Travel', 'FROM "chase.com"'),
+        ('Amex Travel', 'FROM "americanexpress.com"'),
+        ('Capital One', 'FROM "capitalone.com"'),
+        ('Citi', 'FROM "citi.com"'),
+    ]
+
+    # Also search by subject for any we might miss
+    subject_searches = [
+        ('Flight Conf', 'SUBJECT "flight confirmation"'),
+        ('Itinerary', 'SUBJECT "itinerary"'),
+        ('E-Ticket', 'SUBJECT "e-ticket"'),
+        ('Booking Conf', 'SUBJECT "booking confirmation"'),
+        ('Trip Conf', 'SUBJECT "trip confirmation"'),
+        ('Travel Conf', 'SUBJECT "travel confirmation"'),
     ]
 
     all_email_ids = set()
 
-    print(f"    Searching airlines: ", end="", flush=True)
+    print(f"    Searching: ", end="", flush=True)
 
-    for airline_name, search_term in airline_searches:
+    # Search by sender
+    found_sources = []
+    for source_name, search_term in airline_searches:
         try:
             result, data = mail.search(None, f'(SINCE {since_date} {search_term})')
             if result == 'OK' and data[0]:
                 ids = data[0].split()
                 if ids:
                     all_email_ids.update(ids)
-                    print(f"{airline_name}({len(ids)}) ", end="", flush=True)
+                    found_sources.append(f"{source_name}({len(ids)})")
         except:
             pass
+
+    # Search by subject
+    for subject_name, search_term in subject_searches:
+        try:
+            result, data = mail.search(None, f'(SINCE {since_date} {search_term})')
+            if result == 'OK' and data[0]:
+                ids = data[0].split()
+                if ids:
+                    new_ids = set(ids) - all_email_ids
+                    if new_ids:
+                        all_email_ids.update(new_ids)
+                        found_sources.append(f"{subject_name}({len(new_ids)})")
+        except:
+            pass
+
+    # Also search for partial matches in FROM field (catches subdomains like email.jetblue.com)
+    partial_sender_searches = [
+        ('JetBlue+', 'FROM "jetblue"'),
+        ('Delta+', 'FROM "delta"'),
+        ('United+', 'FROM "united"'),
+        ('American+', 'FROM "american"'),
+        ('Southwest+', 'FROM "southwest"'),
+    ]
+    for source_name, search_term in partial_sender_searches:
+        try:
+            result, data = mail.search(None, f'(SINCE {since_date} {search_term})')
+            if result == 'OK' and data[0]:
+                ids = data[0].split()
+                if ids:
+                    new_ids = set(ids) - all_email_ids
+                    if new_ids:
+                        all_email_ids.update(new_ids)
+                        found_sources.append(f"{source_name}({len(new_ids)})")
+        except:
+            pass
+
+    # Print what we found (limit to avoid super long output)
+    if found_sources:
+        if len(found_sources) <= 8:
+            print(" ".join(found_sources), flush=True)
+        else:
+            print(" ".join(found_sources[:6]) + f" (+{len(found_sources)-6} more)", flush=True)
+    else:
+        print("searching...", flush=True)
 
     email_ids = list(all_email_ids)
     total = len(email_ids)
