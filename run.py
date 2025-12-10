@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.9.6"
+VERSION = "1.9.7"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -1094,6 +1094,8 @@ def scan_for_flights(mail, config, folder, processed):
     flight_count = 0
     skipped_count = 0
     phase2_start = time.time()
+    new_flights_list = []  # Track new flights to display
+    skipped_flights_list = []  # Track skipped flights to display
 
     for idx, candidate in enumerate(flight_candidates):
         try:
@@ -1111,7 +1113,7 @@ def scan_for_flights(mail, config, folder, processed):
                 time_str = "starting..."
 
             pct = int((idx + 1) / len(flight_candidates) * 100)
-            print(f"\r    Downloading: {idx + 1}/{len(flight_candidates)} ({pct}%) | {time_str} | New: {flight_count}, Already imported: {skipped_count}   ", end="", flush=True)
+            print(f"\r    Processing: {idx + 1}/{len(flight_candidates)} ({pct}%) | {time_str}                    ", end="", flush=True)
 
             # Now fetch full email content
             email_id = candidate['email_id']
@@ -1139,19 +1141,44 @@ def scan_for_flights(mail, config, folder, processed):
             confirmation = extract_confirmation_code(subject, full_body)
             content_hash = generate_content_hash(subject, full_body)
 
+            # Extract flight details
+            flight_info = extract_flight_info(full_body)
+            email_date = parse_email_date(date_str)
+
+            # Build display string for this flight
+            conf_display = confirmation if confirmation else "------"
+            airports = flight_info.get("airports", [])
+            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+            route = " → ".join(valid_airports[:2]) if valid_airports else ""
+            dates = flight_info.get("dates", [])
+            date_display = ""
+            if dates:
+                d = dates[0]
+                months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+                if any(m in d for m in months) or '/' in d or '-' in d:
+                    date_display = d
+
+            flight_display = f"{conf_display}"
+            if route:
+                flight_display += f"  {route}"
+            if date_display:
+                flight_display += f"  {date_display}"
+
             # Skip if already processed
             if confirmation and confirmation in already_processed:
                 if content_hash in processed_hashes:
                     skipped_count += 1
                     if confirmation not in skipped_confirmations:
                         skipped_confirmations.append(confirmation)
+                    skipped_flights_list.append(flight_display)
+                    # Show skipped flight
+                    print(f"\r    [SKIP] {flight_display} (already in Flighty)                    ")
                     continue
 
             flight_count += 1
-
-            # Extract flight details
-            flight_info = extract_flight_info(full_body)
-            email_date = parse_email_date(date_str)
+            new_flights_list.append(flight_display)
+            # Show new flight found
+            print(f"\r    [NEW]  {flight_display}                                        ")
 
             # Store this flight
             flight_data = {
