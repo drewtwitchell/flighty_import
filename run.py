@@ -407,6 +407,7 @@ def connect_imap(config):
 def scan_for_flights(mail, config, folder):
     """
     Phase 1: Scan folder and collect all flight emails.
+    Uses server-side IMAP search for speed.
     Returns dict of confirmation_code -> list of email data
     """
     flights_found = {}  # confirmation_code -> list of {email_id, date, subject, ...}
@@ -421,49 +422,80 @@ def scan_for_flights(mail, config, folder):
         return flights_found
 
     since_date = (datetime.now() - timedelta(days=config['days_back'])).strftime("%d-%b-%Y")
-    result, data = mail.search(None, f'(SINCE {since_date})')
 
-    if result != 'OK':
+    # Search for airline emails server-side (MUCH faster than scanning all emails)
+    airline_searches = [
+        'FROM "jetblue"',
+        'FROM "delta"',
+        'FROM "united"',
+        'FROM "aa.com"',
+        'FROM "southwest"',
+        'FROM "alaskaair"',
+        'FROM "spirit"',
+        'FROM "flyfrontier"',
+        'FROM "hawaiianair"',
+        'FROM "aircanada"',
+        'FROM "britishairways"',
+        'FROM "lufthansa"',
+        'FROM "emirates"',
+        'SUBJECT "flight confirmation"',
+        'SUBJECT "booking confirmation"',
+        'SUBJECT "itinerary"',
+        'SUBJECT "e-ticket"',
+    ]
+
+    all_email_ids = set()
+
+    print(f"    Searching for flight emails...", end="", flush=True)
+
+    for idx, search_term in enumerate(airline_searches):
+        try:
+            result, data = mail.search(None, f'(SINCE {since_date} {search_term})')
+            if result == 'OK' and data[0]:
+                ids = data[0].split()
+                all_email_ids.update(ids)
+        except:
+            pass  # Some searches may fail, that's OK
+
+        # Progress dots
+        if idx % 4 == 0:
+            print(".", end="", flush=True)
+
+    email_ids = list(all_email_ids)
+    total = len(email_ids)
+
+    print(f" found {total} potential matches")
+
+    if total == 0:
         return flights_found
 
-    email_ids = data[0].split()
-    total = len(email_ids)
     flight_count = 0
 
-    # Progress indicator
-    print(f"    Scanning {total} emails", end="", flush=True)
+    print(f"    Processing", end="", flush=True)
 
     for idx, email_id in enumerate(email_ids):
-        # Show progress every 50 emails
-        if idx > 0 and idx % 50 == 0:
-            print(f"...{idx}", end="", flush=True)
+        # Show progress
+        if idx > 0 and idx % 5 == 0:
+            print(".", end="", flush=True)
 
-        # Fetch headers first (fast)
-        result, header_data = mail.fetch(email_id, '(BODY[HEADER.FIELDS (FROM SUBJECT DATE)])')
-        if result != 'OK':
-            continue
-
-        header_raw = header_data[0][1]
-        header_msg = email.message_from_bytes(header_raw)
-
-        from_addr = decode_header_value(header_msg.get('From', ''))
-        subject = decode_header_value(header_msg.get('Subject', ''))
-        date_str = header_msg.get('Date', '')
-
-        # Quick check - is this a flight email?
-        is_flight, airline = is_flight_email(from_addr, subject)
-        if not is_flight:
-            continue
-
-        flight_count += 1
-
-        # Fetch full email body
+        # Fetch full email
         result, msg_data = mail.fetch(email_id, '(RFC822)')
         if result != 'OK':
             continue
 
         raw_email = msg_data[0][1]
         msg = email.message_from_bytes(raw_email)
+
+        from_addr = decode_header_value(msg.get('From', ''))
+        subject = decode_header_value(msg.get('Subject', ''))
+        date_str = msg.get('Date', '')
+
+        # Verify it's actually a flight email
+        is_flight, airline = is_flight_email(from_addr, subject)
+        if not is_flight:
+            continue
+
+        flight_count += 1
 
         body, html_body = get_email_body(msg)
         full_body = body or html_body or ""
@@ -495,7 +527,7 @@ def scan_for_flights(mail, config, folder):
             flights_found[key] = []
         flights_found[key].append(flight_data)
 
-    print(f" Done! ({flight_count} flight emails)")
+    print(f" done! ({flight_count} confirmed)")
     return flights_found
 
 
