@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.9.4"
+VERSION = "1.9.5"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -985,78 +985,116 @@ def scan_for_flights(mail, config, folder, processed):
     print(f"    Found {total} emails that might contain flight info.")
     print()
 
-    # Estimate time based on number of emails
-    est_seconds = total * 0.5  # Roughly 0.5 sec per email
-    est_mins = int(est_seconds // 60)
-    est_secs = int(est_seconds % 60)
-    if est_mins > 0:
-        print(f"    ESTIMATED TIME: {est_mins}-{est_mins + 2} minutes for {total} emails")
-    else:
-        print(f"    ESTIMATED TIME: About {est_secs} seconds for {total} emails")
+    # PHASE 1: Quick header scan (fast - only downloads headers, not full emails)
+    print(f"    PHASE 1: Quick scan of email headers...")
+    print(f"    (This is fast - only downloading subject lines, not full emails)")
     print()
-    print(f"    Now examining each email to find flight confirmations...")
-    print(f"    Please wait - this downloads and checks each email individually.")
+
+    flight_candidates = []  # Emails that look like flight confirmations
+    scan_start_time = time.time()
+
+    for idx, email_id in enumerate(email_ids):
+        try:
+            # Show progress
+            if (idx + 1) % 50 == 0 or idx == 0 or idx == total - 1:
+                pct = int((idx + 1) / total * 100)
+                print(f"\r    Checking headers: {idx + 1}/{total} ({pct}%)   ", end="", flush=True)
+
+            # Fetch ONLY headers (much faster than full email)
+            try:
+                result, msg_data = mail.fetch(email_id, '(BODY.PEEK[HEADER.FIELDS (FROM SUBJECT DATE)])')
+                if result != 'OK' or not msg_data or not msg_data[0]:
+                    continue
+            except Exception:
+                continue
+
+            # Parse headers
+            header_data = msg_data[0][1]
+            if not header_data:
+                continue
+
+            header_msg = email.message_from_bytes(header_data)
+            from_addr = decode_header_value(header_msg.get('From', ''))
+            subject = decode_header_value(header_msg.get('Subject', ''))
+            date_str = header_msg.get('Date', '')
+
+            # Check if this looks like a flight email based on headers
+            is_flight, airline = is_flight_email(from_addr, subject)
+            if is_flight:
+                flight_candidates.append({
+                    'email_id': email_id,
+                    'from_addr': from_addr,
+                    'subject': subject,
+                    'date_str': date_str,
+                    'airline': airline
+                })
+
+        except Exception:
+            continue
+
+    phase1_time = time.time() - scan_start_time
+    print(f"\r    Header scan complete! ({int(phase1_time)} sec)" + " " * 30)
+    print(f"    Found {len(flight_candidates)} flight confirmation emails")
+    print()
+
+    if not flight_candidates:
+        print(f"    No flight confirmations found in this folder.")
+        return flights_found, skipped_confirmations
+
+    # PHASE 2: Download full content for flight emails only
+    print(f"    PHASE 2: Downloading {len(flight_candidates)} flight emails...")
+    print(f"    (Now downloading full email content to extract flight details)")
     print()
 
     flight_count = 0
     skipped_count = 0
-    scan_start_time = time.time()
+    phase2_start = time.time()
 
-    error_count = 0
-    for idx, email_id in enumerate(email_ids):
+    for idx, candidate in enumerate(flight_candidates):
         try:
-            # Calculate time remaining
-            elapsed = time.time() - scan_start_time
+            # Show progress with time estimate
+            elapsed = time.time() - phase2_start
             if idx > 0:
-                avg_per_email = elapsed / idx
-                remaining = avg_per_email * (total - idx)
-                remaining_mins = int(remaining // 60)
-                remaining_secs = int(remaining % 60)
-                if remaining_mins > 0:
-                    time_str = f"~{remaining_mins}m {remaining_secs}s left"
+                avg_per = elapsed / idx
+                remaining = avg_per * (len(flight_candidates) - idx)
+                remaining_secs = int(remaining)
+                if remaining_secs > 60:
+                    time_str = f"~{remaining_secs // 60}m {remaining_secs % 60}s left"
                 else:
                     time_str = f"~{remaining_secs}s left"
             else:
-                time_str = "calculating..."
+                time_str = "starting..."
 
-            # Show progress with percentage and time remaining
-            pct = int((idx + 1) / total * 100)
-            print(f"\r    Progress: {idx + 1}/{total} ({pct}%) | {time_str} | Found: {flight_count} new, {skipped_count} already imported   ", end="", flush=True)
+            pct = int((idx + 1) / len(flight_candidates) * 100)
+            print(f"\r    Downloading: {idx + 1}/{len(flight_candidates)} ({pct}%) | {time_str} | New: {flight_count}, Already imported: {skipped_count}   ", end="", flush=True)
 
-            # Fetch full email
+            # Now fetch full email content
+            email_id = candidate['email_id']
             try:
                 result, msg_data = mail.fetch(email_id, '(RFC822)')
                 if result != 'OK' or not msg_data or not msg_data[0]:
-                    error_count += 1
                     continue
             except Exception:
-                error_count += 1
                 continue
 
             raw_email = msg_data[0][1]
             if not raw_email:
-                error_count += 1
                 continue
 
             msg = email.message_from_bytes(raw_email)
-
-            from_addr = decode_header_value(msg.get('From', ''))
-            subject = decode_header_value(msg.get('Subject', ''))
-            date_str = msg.get('Date', '')
-
-            # Verify it's actually a flight email
-            is_flight, airline = is_flight_email(from_addr, subject)
-            if not is_flight:
-                continue
+            from_addr = candidate['from_addr']
+            subject = candidate['subject']
+            date_str = candidate['date_str']
+            airline = candidate['airline']
 
             body, html_body = get_email_body(msg)
             full_body = body or html_body or ""
 
-            # Extract confirmation code early to check if already processed
+            # Extract confirmation code
             confirmation = extract_confirmation_code(subject, full_body)
             content_hash = generate_content_hash(subject, full_body)
 
-            # Skip if already processed (same confirmation AND same content hash)
+            # Skip if already processed
             if confirmation and confirmation in already_processed:
                 if content_hash in processed_hashes:
                     skipped_count += 1
@@ -1066,11 +1104,11 @@ def scan_for_flights(mail, config, folder, processed):
 
             flight_count += 1
 
-            # Extract remaining details
+            # Extract flight details
             flight_info = extract_flight_info(full_body)
             email_date = parse_email_date(date_str)
 
-            # Store this flight email
+            # Store this flight
             flight_data = {
                 "email_id": email_id,
                 "msg": msg,
@@ -1084,29 +1122,25 @@ def scan_for_flights(mail, config, folder, processed):
                 "folder": folder
             }
 
-            # Group by confirmation code (or use content hash if no confirmation)
             key = confirmation if confirmation else f"unknown_{content_hash}"
-
             if key not in flights_found:
                 flights_found[key] = []
             flights_found[key].append(flight_data)
 
-        except Exception as e:
-            # Log error but continue processing other emails
-            error_count += 1
+        except Exception:
             continue
 
-    # Calculate actual time taken
-    scan_elapsed = time.time() - scan_start_time
-    scan_mins = int(scan_elapsed // 60)
-    scan_secs = int(scan_elapsed % 60)
+    # Final summary
+    total_time = time.time() - scan_start_time
+    total_mins = int(total_time // 60)
+    total_secs = int(total_time % 60)
 
     print(f"\r    Scan complete!" + " " * 60)
     print()
-    if scan_mins > 0:
-        print(f"    Time taken: {scan_mins} min {scan_secs} sec")
+    if total_mins > 0:
+        print(f"    Total time: {total_mins} min {total_secs} sec")
     else:
-        print(f"    Time taken: {scan_secs} seconds")
+        print(f"    Total time: {total_secs} seconds")
     print()
     print(f"    Results for this folder:")
     print(f"      - New flight confirmations found: {flight_count}")
