@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.0"
+VERSION = "1.8.1"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -100,48 +100,58 @@ def auto_update():
         print()
         return False
 
-# Major airports that people actually fly through
-# This curated list prevents false positives from obscure codes like CRO, THE, AIR
-MAJOR_AIRPORT_CODES = {
-    # Top 50 US airports
-    'ATL', 'DFW', 'DEN', 'ORD', 'LAX', 'JFK', 'LAS', 'MCO', 'MIA', 'CLT',
-    'SEA', 'PHX', 'EWR', 'SFO', 'IAH', 'BOS', 'FLL', 'MSP', 'LGA', 'DTW',
-    'PHL', 'SLC', 'DCA', 'SAN', 'BWI', 'TPA', 'AUS', 'IAD', 'BNA', 'MDW',
-    'HNL', 'DAL', 'PDX', 'STL', 'RDU', 'HOU', 'OAK', 'MSY', 'SJC', 'SMF',
-    'SNA', 'MCI', 'SAT', 'CLE', 'IND', 'PIT', 'CMH', 'CVG', 'BDL', 'JAX',
-    'OGG', 'ANC', 'BUF', 'ABQ', 'ONT', 'OMA', 'BUR', 'PBI', 'RIC', 'RSW',
-    'SDF', 'MKE', 'TUS', 'OKC', 'RNO', 'ELP', 'BOI', 'LIT', 'TUL', 'GEG',
+# Load ALL valid IATA airport codes from file (9800+ codes)
+AIRPORT_CODES_FILE = SCRIPT_DIR / "airport_codes.txt"
 
-    # Major Canadian airports
-    'YYZ', 'YVR', 'YUL', 'YYC', 'YEG', 'YOW', 'YWG', 'YHZ', 'YQB',
+def load_airport_codes():
+    """Load valid airport codes and names from file."""
+    codes = set()
+    names = {}
+    try:
+        if AIRPORT_CODES_FILE.exists():
+            with open(AIRPORT_CODES_FILE, 'r', encoding='utf-8', errors='ignore') as f:
+                for line in f:
+                    try:
+                        line = line.strip()
+                        if ',' in line:
+                            parts = line.split(',', 1)
+                            code = parts[0].strip().upper()
+                            name = parts[1].strip() if len(parts) > 1 else ""
+                            if len(code) == 3 and code.isalpha():
+                                codes.add(code)
+                                if name:
+                                    names[code] = name
+                    except Exception:
+                        continue
+    except Exception:
+        pass
 
-    # Major Mexican airports
-    'MEX', 'CUN', 'GDL', 'SJD', 'PVR', 'MTY',
+    # Fallback to common codes if file doesn't exist
+    if not codes:
+        codes = {
+            'ATL', 'DFW', 'DEN', 'ORD', 'LAX', 'JFK', 'LAS', 'MCO', 'MIA', 'CLT',
+            'SEA', 'PHX', 'EWR', 'SFO', 'IAH', 'BOS', 'FLL', 'MSP', 'LGA', 'DTW',
+        }
+    return codes, names
 
-    # Major Caribbean airports
-    'SJU', 'NAS', 'MBJ', 'PUJ', 'STT', 'STX', 'AUA', 'CUR', 'SXM', 'GCM',
+# Load all airport codes from file
+ALL_AIRPORT_CODES, AIRPORT_NAMES_FROM_FILE = load_airport_codes()
 
-    # Major European airports
-    'LHR', 'CDG', 'AMS', 'FRA', 'MAD', 'BCN', 'FCO', 'MUC', 'ZRH', 'VIE',
-    'DUB', 'LIS', 'CPH', 'OSL', 'ARN', 'HEL', 'BRU', 'MAN', 'EDI', 'GLA',
-    'ATH', 'IST', 'PRG', 'WAW', 'BUD',
-
-    # Major Asian airports
-    'HND', 'NRT', 'ICN', 'PEK', 'PVG', 'HKG', 'SIN', 'BKK', 'KUL', 'TPE',
-    'DEL', 'BOM', 'DXB', 'AUH', 'DOH', 'TLV',
-
-    # Major Australian/Pacific airports
-    'SYD', 'MEL', 'BNE', 'AKL', 'PPT', 'NAN',
-
-    # Major South American airports
-    'GRU', 'GIG', 'EZE', 'SCL', 'BOG', 'LIM', 'PTY',
-
-    # Major African airports
-    'JNB', 'CPT', 'CAI', 'CMN', 'ADD',
+# Common English words that happen to be 3 letters - exclude these
+EXCLUDED_CODES = {
+    'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HAD',
+    'HER', 'WAS', 'ONE', 'OUR', 'OUT', 'DAY', 'GET', 'HAS', 'HIM', 'HIS',
+    'HOW', 'ITS', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 'BOY',
+    'DID', 'SAY', 'SHE', 'TOO', 'USE', 'AIR', 'FLY', 'RUN', 'TRY', 'CAR',
+    'END', 'PRE', 'PRO', 'VIA', 'PER', 'NET', 'WEB', 'APP', 'API', 'URL',
+    'USA', 'CRO', 'CSS', 'PHP', 'SQL', 'XML', 'PDF', 'JPG', 'PNG', 'GIF',
 }
 
-# Airport names for display
-AIRPORT_NAMES = {
+# Use all codes except excluded words
+VALID_AIRPORT_CODES = ALL_AIRPORT_CODES - EXCLUDED_CODES
+
+# Friendly names for major airports (override file names for cleaner display)
+FRIENDLY_NAMES = {
     # US Major
     'ATL': 'Atlanta', 'DFW': 'Dallas-Fort Worth', 'DEN': 'Denver', 'ORD': "Chicago O'Hare",
     'LAX': 'Los Angeles', 'JFK': 'New York JFK', 'LAS': 'Las Vegas', 'MCO': 'Orlando',
@@ -161,51 +171,43 @@ AIRPORT_NAMES = {
     'SDF': 'Louisville', 'MKE': 'Milwaukee', 'TUS': 'Tucson', 'OKC': 'Oklahoma City',
     'RNO': 'Reno', 'ELP': 'El Paso', 'BOI': 'Boise', 'LIT': 'Little Rock',
     'TUL': 'Tulsa', 'GEG': 'Spokane', 'MVY': "Martha's Vineyard", 'ACK': 'Nantucket',
-
     # Canada
     'YYZ': 'Toronto', 'YVR': 'Vancouver', 'YUL': 'Montreal', 'YYC': 'Calgary',
-    'YEG': 'Edmonton', 'YOW': 'Ottawa', 'YWG': 'Winnipeg', 'YHZ': 'Halifax', 'YQB': 'Quebec City',
-
+    'YEG': 'Edmonton', 'YOW': 'Ottawa', 'YWG': 'Winnipeg', 'YHZ': 'Halifax',
     # Mexico & Caribbean
-    'MEX': 'Mexico City', 'CUN': 'Cancun', 'GDL': 'Guadalajara', 'SJD': 'San Jose del Cabo',
-    'PVR': 'Puerto Vallarta', 'MTY': 'Monterrey', 'SJU': 'San Juan', 'NAS': 'Nassau',
-    'MBJ': 'Montego Bay', 'PUJ': 'Punta Cana', 'STT': 'St. Thomas', 'STX': 'St. Croix',
-    'AUA': 'Aruba', 'CUR': 'Curacao', 'SXM': 'St. Maarten', 'GCM': 'Grand Cayman',
-
+    'MEX': 'Mexico City', 'CUN': 'Cancun', 'GDL': 'Guadalajara', 'SJD': 'Cabo',
+    'PVR': 'Puerto Vallarta', 'SJU': 'San Juan', 'NAS': 'Nassau', 'MBJ': 'Montego Bay',
+    'PUJ': 'Punta Cana', 'STT': 'St. Thomas', 'AUA': 'Aruba', 'SXM': 'St. Maarten',
     # Europe
-    'LHR': 'London Heathrow', 'CDG': 'Paris', 'AMS': 'Amsterdam', 'FRA': 'Frankfurt',
-    'MAD': 'Madrid', 'BCN': 'Barcelona', 'FCO': 'Rome', 'MUC': 'Munich', 'ZRH': 'Zurich',
-    'VIE': 'Vienna', 'DUB': 'Dublin', 'LIS': 'Lisbon', 'CPH': 'Copenhagen', 'OSL': 'Oslo',
-    'ARN': 'Stockholm', 'HEL': 'Helsinki', 'BRU': 'Brussels', 'MAN': 'Manchester',
-    'EDI': 'Edinburgh', 'GLA': 'Glasgow', 'ATH': 'Athens', 'IST': 'Istanbul',
-    'PRG': 'Prague', 'WAW': 'Warsaw', 'BUD': 'Budapest',
-
+    'LHR': 'London Heathrow', 'LGW': 'London Gatwick', 'CDG': 'Paris', 'AMS': 'Amsterdam',
+    'FRA': 'Frankfurt', 'MAD': 'Madrid', 'BCN': 'Barcelona', 'FCO': 'Rome',
+    'MUC': 'Munich', 'ZRH': 'Zurich', 'DUB': 'Dublin', 'LIS': 'Lisbon',
+    'ATH': 'Athens', 'IST': 'Istanbul', 'PRG': 'Prague',
     # Asia & Middle East
     'HND': 'Tokyo Haneda', 'NRT': 'Tokyo Narita', 'ICN': 'Seoul', 'PEK': 'Beijing',
     'PVG': 'Shanghai', 'HKG': 'Hong Kong', 'SIN': 'Singapore', 'BKK': 'Bangkok',
-    'KUL': 'Kuala Lumpur', 'TPE': 'Taipei', 'DEL': 'Delhi', 'BOM': 'Mumbai',
-    'DXB': 'Dubai', 'AUH': 'Abu Dhabi', 'DOH': 'Doha', 'TLV': 'Tel Aviv',
-
+    'DXB': 'Dubai', 'DOH': 'Doha', 'TLV': 'Tel Aviv',
     # Australia/Pacific
-    'SYD': 'Sydney', 'MEL': 'Melbourne', 'BNE': 'Brisbane', 'AKL': 'Auckland',
-    'PPT': 'Tahiti', 'NAN': 'Fiji',
-
+    'SYD': 'Sydney', 'MEL': 'Melbourne', 'AKL': 'Auckland',
     # South America
-    'GRU': 'Sao Paulo', 'GIG': 'Rio de Janeiro', 'EZE': 'Buenos Aires', 'SCL': 'Santiago',
-    'BOG': 'Bogota', 'LIM': 'Lima', 'PTY': 'Panama City',
-
-    # Africa
-    'JNB': 'Johannesburg', 'CPT': 'Cape Town', 'CAI': 'Cairo', 'CMN': 'Casablanca', 'ADD': 'Addis Ababa',
+    'GRU': 'Sao Paulo', 'EZE': 'Buenos Aires', 'BOG': 'Bogota', 'LIM': 'Lima',
 }
 
-VALID_AIRPORT_CODES = MAJOR_AIRPORT_CODES
+# Merge names: use friendly names first, then file names
+AIRPORT_NAMES = {**AIRPORT_NAMES_FROM_FILE, **FRIENDLY_NAMES}
 
 
 def get_airport_display(code):
     """Get display string for airport code."""
     name = AIRPORT_NAMES.get(code, "")
     if name:
-        return f"{code} ({name})"
+        # Shorten long airport names
+        short_name = name.replace(" International Airport", "").replace(" Airport", "")
+        short_name = short_name.replace(" International", "").replace(" Regional", "")
+        # Truncate if still too long
+        if len(short_name) > 25:
+            short_name = short_name[:22] + "..."
+        return f"{code} ({short_name})"
     return code
 
 # Airline patterns to detect flight confirmation emails

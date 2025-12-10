@@ -12,7 +12,7 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 - **Smart deduplication** - groups all emails by confirmation code, forwards only the latest
 - **Change detection** - if a flight is modified, automatically re-imports the updated version
 - **Crash protection** - saves progress after each email, recovers from errors automatically
-- **Curated airport database** - ~150 major airports to prevent false matches
+- **9,800+ airport codes** - full IATA database with common word filtering
 - Shows flight details including route, date with year, time, and flight number
 - Simple interactive setup - no coding required
 
@@ -264,7 +264,7 @@ crontab -e
 - Run with `--dry-run` to see what's being detected
 
 **Wrong route or date showing**
-- The script uses a curated list of ~150 major airports to prevent false matches from obscure codes
+- The script uses all 9,800+ IATA codes but filters out common English words (THE, AIR, CRO, etc.)
 - Dates always include the year (e.g., "December 7, 2025") - if the email doesn't have a year, the current year is added
 - The actual forwarded email contains all original details - Flighty will parse it correctly
 
