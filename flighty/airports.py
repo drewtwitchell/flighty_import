@@ -33,6 +33,11 @@ EXCLUDED_CODES = {
     'COM', 'ORG', 'EDU', 'GOV', 'MIL', 'BIZ', 'INFO',
     'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN',  # Days
     'JAN', 'FEB', 'MAR', 'APR', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',  # Months
+    # False positive "airport codes" that appear in emails but aren't real routes
+    'NON', 'APY', 'CIA',  # CIA is Rome Ciampino but rarely used in US travel emails
+    'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ',
+    'KKK', 'LLL', 'MMM', 'NNN', 'OOO', 'PPP', 'QQQ', 'RRR', 'SSS', 'TTT',
+    'UUU', 'VVV', 'WWW', 'XXX', 'YYY', 'ZZZ',  # Repeated letters not real codes
 }
 
 # Friendly names for major airports (override file names for cleaner display)

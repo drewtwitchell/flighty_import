@@ -38,6 +38,28 @@ _CONFIRMATION_PATTERNS = [
 _SUBJECT_CONF_PATTERN = re.compile(r'[–-]\s*([A-Z0-9]{6})\s*$')
 _GENERIC_CONF_PATTERN = re.compile(r'\b([A-Z0-9]{6})\b')
 
+# Common English words that are 6 characters - these are NOT confirmation codes
+# These cause false positives when parsing email text
+_EXCLUDED_CONFIRMATION_CODES = {
+    # Common words that appear in flight emails
+    'WINDOW', 'BEFORE', 'CHANGE', 'FLIGHT', 'NUMBER', 'PLEASE', 'THANKS',
+    'TRAVEL', 'RETURN', 'ARRIVE', 'DEPART', 'BOSTON', 'DALLAS', 'DENVER',
+    'OTHERS', 'REVIEW', 'UPDATE', 'MANAGE', 'CANCEL', 'MODIFY', 'CREDIT',
+    'POINTS', 'MEMBER', 'STATUS', 'SELECT', 'CHOOSE', 'OPTION', 'DOUBLE',
+    'SINGLE', 'UNITED', 'VIRGIN', 'SPIRIT', 'AMOUNT', 'DOLLAR', 'CHARGE',
+    'REFUND', 'POLICY', 'NOTICE', 'DETAIL', 'ITINER', 'RECEPT', 'INVOIC',
+    'TICKET', 'RESERV', 'CONFIR', 'AIRPOR', 'TERMIN', 'CHECKIN',
+    # More common words
+    'EITHER', 'STREET', 'WITHIN', 'DURING', 'ACROSS', 'AROUND', 'BEHIND',
+    'BEYOND', 'TOWARD', 'SHOULD', 'THOUGH', 'REALLY', 'ALWAYS', 'ALMOST',
+    'PEOPLE', 'THINGS', 'HAPPEN', 'COMING', 'MAKING', 'TAKING', 'HAVING',
+    'FAMILY', 'FRIEND', 'SUMMER', 'WINTER', 'SPRING', 'MONDAY', 'FRIDAY',
+    'AUGUST', 'JANUAR', 'OCTOBE', 'NOVEMB', 'DECEMB', 'SEPTEM',
+    # Technical/email words
+    'IMAGES', 'CHROME', 'SAFARI', 'MOBILE', 'ONLINE', 'ACCESS', 'SECURE',
+    'SUBMIT', 'BUTTON', 'FOOTER', 'HEADER', 'EMAILX', 'DOMAIN', 'SERVER',
+}
+
 # Airport extraction patterns (pre-compiled)
 _CITY_CODE_PATTERN = re.compile(r'([A-Za-z\s]+)\s*\(([A-Z]{3})\)')
 _ROUTE_PATTERN = re.compile(r'\b([A-Z]{3})\s*(?:→|->|►|to|–|-)\s*([A-Z]{3})\b')
@@ -115,6 +137,38 @@ def strip_html_tags(html_text):
         return text.strip()
 
 
+def _is_valid_confirmation_code(code):
+    """Check if a code looks like a valid confirmation code.
+
+    Real confirmation codes are typically alphanumeric with mixed letters/numbers.
+    Pure English words are not valid codes.
+    """
+    if not code:
+        return False
+    code = code.upper()
+
+    # Check against excluded words
+    if code in _EXCLUDED_CONFIRMATION_CODES:
+        return False
+    if code in EXCLUDED_CODES:  # Also check 3-letter exclusions (shouldn't match 6-char but be safe)
+        return False
+
+    # All digits is not a confirmation code (more likely a date or amount)
+    if code.isdigit():
+        return False
+
+    # All letters with common word patterns - likely not a code
+    # Real codes typically have at least one number OR unusual letter combos
+    if code.isalpha():
+        # Check for common word endings that indicate English words
+        word_endings = ('ING', 'TED', 'LLY', 'ION', 'ATE', 'ENT', 'OUS', 'URE', 'BLE')
+        for ending in word_endings:
+            if code.endswith(ending):
+                return False
+
+    return True
+
+
 def extract_confirmation_code(subject, body):
     """Extract confirmation code from email subject or body.
 
@@ -128,22 +182,35 @@ def extract_confirmation_code(subject, body):
     # First try subject line - often has format "... - ABCDEF"
     match = _SUBJECT_CONF_PATTERN.search(subject)
     if match:
-        return match.group(1)
+        code = match.group(1).upper()
+        if _is_valid_confirmation_code(code):
+            return code
 
     # Try to find confirmation code in context
     for pattern in _CONFIRMATION_PATTERNS:
         match = pattern.search(body)
         if match:
-            return match.group(1).upper()
+            code = match.group(1).upper()
+            if _is_valid_confirmation_code(code):
+                return code
 
-    # Try subject with generic pattern
+    # Try subject with generic pattern (less reliable)
     match = _GENERIC_CONF_PATTERN.search(subject)
     if match:
-        code = match.group(1)
-        if code not in EXCLUDED_CODES and not code.isdigit():
+        code = match.group(1).upper()
+        if _is_valid_confirmation_code(code):
             return code
 
     return None
+
+
+def _is_valid_flight_year(year):
+    """Check if a year is reasonable for a flight date.
+
+    Flights are typically within 1 year in the past or 2 years in the future.
+    """
+    current_year = datetime.now().year
+    return (current_year - 1) <= year <= (current_year + 2)
 
 
 def _extract_dates_dateutil(text, base_year=None):
@@ -172,13 +239,11 @@ def _extract_dates_dateutil(text, base_year=None):
         'january', 'february', 'march', 'april', 'may', 'june',
         'july', 'august', 'september', 'october', 'november', 'december',
         'jan', 'feb', 'mar', 'apr', 'jun', 'jul', 'aug', 'sep', 'oct', 'nov', 'dec',
-        'monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday',
-        'mon', 'tue', 'wed', 'thu', 'fri', 'sat', 'sun',
     ]
 
     text_lower = text.lower()
 
-    # Find positions of date indicators
+    # Find positions of date indicators (month names only, not day names which cause false positives)
     positions = []
     for indicator in date_indicators:
         start = 0
@@ -189,8 +254,8 @@ def _extract_dates_dateutil(text, base_year=None):
             positions.append(pos)
             start = pos + 1
 
-    # Also find numeric date patterns (MM/DD, DD/MM, YYYY-MM-DD)
-    numeric_date_pattern = re.compile(r'\b\d{1,4}[-/]\d{1,2}[-/]\d{1,4}\b')
+    # Also find numeric date patterns (MM/DD/YYYY, YYYY-MM-DD)
+    numeric_date_pattern = re.compile(r'\b\d{1,4}[-/]\d{1,2}[-/]\d{2,4}\b')
     for match in numeric_date_pattern.finditer(text):
         positions.append(match.start())
 
@@ -200,13 +265,17 @@ def _extract_dates_dateutil(text, base_year=None):
     # Extract date strings around each position
     for pos in positions:
         # Get a window around the position
-        start = max(0, pos - 10)
-        end = min(len(text), pos + 40)
+        start = max(0, pos - 5)
+        end = min(len(text), pos + 30)
         chunk = text[start:end]
 
         try:
             # Use dateutil to parse
             parsed = dateutil_parser.parse(chunk, fuzzy=True, default=datetime(base_year, 1, 1))
+
+            # Validate the year is reasonable for a flight
+            if not _is_valid_flight_year(parsed.year):
+                continue
 
             # Format consistently
             formatted = parsed.strftime("%B %d, %Y")
