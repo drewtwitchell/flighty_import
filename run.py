@@ -28,7 +28,7 @@ CONFIG_FILE = SCRIPT_DIR / "config.json"
 PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
-VERSION = "1.8.9"
+VERSION = "1.9.0"
 GITHUB_REPO = "drewtwitchell/flighty_import"
 UPDATE_FILES = ["run.py", "setup.py", "airport_codes.txt"]
 
@@ -715,8 +715,8 @@ def parse_email_date(date_str):
         return datetime.min
 
 
-def forward_email(config, msg, from_addr, subject, max_retries=3):
-    """Forward an email to Flighty with retry logic."""
+def forward_email(config, msg, from_addr, subject):
+    """Forward an email to Flighty. Waits and retries until it succeeds or hard fails."""
     import time
 
     forward_msg = MIMEMultipart('mixed')
@@ -740,35 +740,44 @@ Subject: {subject}
     if html_body:
         forward_msg.attach(MIMEText(html_body, 'html'))
 
-    retry_delays = [15, 30, 60, 90, 120]  # Much longer delays for AOL rate limiting
-    max_retries = len(retry_delays) + 1  # 6 total attempts
+    # Retry with increasing delays until it works
+    # AOL rate limits aggressively - we need to wait it out
+    retry_delays = [10, 30, 60, 120, 180, 300]  # Up to 5 minutes wait
+    max_attempts = len(retry_delays) + 1
 
-    for attempt in range(max_retries):
+    for attempt in range(max_attempts):
         try:
-            with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=90) as server:
+            with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=60) as server:
                 server.starttls()
                 server.login(config['email'], config['password'])
                 server.send_message(forward_msg)
-            return True
+            return True  # Success
         except Exception as e:
             error_msg = str(e).lower()
-            # Check if it's a rate limit, connection, or temporary error
+
+            # Check if this is a rate limit / connection error (recoverable)
             is_rate_limit = any(x in error_msg for x in [
                 'rate', 'limit', 'too many', 'try again', 'temporarily',
                 '421', '450', '451', '452', '454', '554',
-                'connection', 'closed', 'reset', 'timeout', 'refused'
+                'connection', 'closed', 'reset', 'refused', 'timeout'
             ])
 
-            if attempt < max_retries - 1:
+            if attempt < max_attempts - 1:
                 wait_time = retry_delays[attempt]
                 if is_rate_limit:
-                    wait_time = wait_time * 2  # Double wait time for rate limits
-                print(f"waiting {wait_time}s...", end="", flush=True)
+                    # Show countdown for long waits
+                    if wait_time >= 60:
+                        print(f"rate limited, waiting {wait_time}s...", end="", flush=True)
+                    else:
+                        print(f"retry in {wait_time}s...", end="", flush=True)
+                else:
+                    print(f"error, retry in {wait_time}s...", end="", flush=True)
                 time.sleep(wait_time)
-                print(f" retry {attempt + 2}/{max_retries}...", end="", flush=True)
             else:
-                print(f"\n      Failed after {max_retries} attempts: {e}")
+                # All retries exhausted
+                print(f"FAILED after {max_attempts} attempts")
                 return False
+
     return False
 
 
@@ -1277,20 +1286,18 @@ def forward_flights(config, to_forward, processed, dry_run):
                     except Exception:
                         pass
                 else:
-                    print("FAILED")
                     failed += 1
 
             except Exception as send_err:
-                print(f"FAILED ({send_err})")
+                print(f"FAILED")
                 failed += 1
 
         except Exception as e:
-            print(f"\n  [{idx + 1}/{total}] Error processing flight: {e}")
             failed += 1
             continue
 
     if failed > 0:
-        print(f"\n  Note: {failed} email(s) failed to send. Run again to retry.")
+        print(f"\n  {failed} email(s) failed. Run again to retry.")
 
     return forwarded
 
