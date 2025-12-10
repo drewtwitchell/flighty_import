@@ -3,6 +3,7 @@ config.json
 
 # Processed emails tracking
 processed_emails.json
+processed_flights.json
 
 # Python
 __pycache__/
