@@ -60,6 +60,17 @@ Most email providers require an "App Password" instead of your regular password:
 
 ## Usage
 
+### Quick Reference
+
+| Command | Description |
+|---------|-------------|
+| `python3 run.py` | Run and forward flight emails |
+| `python3 run.py --dry-run` | Test without forwarding (see what would be sent) |
+| `python3 run.py --setup` | Run the setup wizard |
+| `python3 run.py --reset` | Clear processed flights history |
+| `python3 run.py --help` | Show help message |
+| `python3 setup.py` | Run setup wizard directly |
+
 ### Test Mode (Dry Run)
 
 See what emails would be forwarded without actually sending anything:
@@ -96,6 +107,37 @@ python3 run.py --reset
 
 ```bash
 python3 run.py --help
+```
+
+## Sample Output
+
+```
+==================================================
+  Flighty Email Forwarder
+==================================================
+
+  Account:     yourname@aol.com
+  Forward to:  track@my.flightyapp.com
+  Days back:   30
+
+Searching: INBOX
+
+  Found: JetBlue
+    From: JetBlue Reservations <jetblueairways@email.jetblue.com>...
+    Subject: JetBlue booking confirmation for JOHN DOE - DJWNTF...
+    Confirmation: DJWNTF
+    Flights: 652
+    -> Forwarded to Flighty
+
+  [SKIP] JetBlue - already processed (confirmation DJWNTF)
+    Subject: JetBlue booking confirmation for JOHN DOE - DJ...
+    Confirmation: DJWNTF
+
+--------------------------------------------------
+  Flight emails found:    2
+  Already processed:      1
+  Successfully forwarded: 1
+--------------------------------------------------
 ```
 
 ## How Deduplication Works

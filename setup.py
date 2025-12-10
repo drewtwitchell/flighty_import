@@ -249,7 +249,7 @@ def run_setup():
         default="n"
     )
 
-    config["processed_file"] = "processed_emails.json"
+    config["processed_file"] = "processed_flights.json"
 
     # Summary
     clear_screen()
