@@ -29,14 +29,68 @@ PROCESSED_FILE = SCRIPT_DIR / "processed_flights.json"
 
 
 def auto_update():
-    """Run update.sh to check for and apply updates."""
-    update_script = SCRIPT_DIR / "update.sh"
-    if update_script.exists():
-        try:
-            subprocess.run(["bash", str(update_script)], cwd=SCRIPT_DIR)
-            print()  # Add blank line after update output
-        except Exception:
-            pass  # Silently continue if update fails
+    """Check for and apply updates from GitHub."""
+    print("\n=== Checking for updates ===")
+
+    try:
+        # Check if this is a git repo
+        result = subprocess.run(
+            ["git", "rev-parse", "--is-inside-work-tree"],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True
+        )
+        if result.returncode != 0:
+            print("Not a git repository - skipping update check")
+            print()
+            return
+
+        # Fetch latest from remote
+        subprocess.run(
+            ["git", "fetch", "origin"],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True
+        )
+
+        # Check if we're behind
+        result = subprocess.run(
+            ["git", "rev-list", "--count", "HEAD..origin/main"],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True
+        )
+
+        behind = int(result.stdout.strip() or "0")
+
+        if behind == 0:
+            print("Already up to date!")
+            print()
+            return
+
+        print(f"{behind} update(s) available. Downloading...")
+
+        # Pull latest
+        result = subprocess.run(
+            ["git", "pull", "origin", "main"],
+            cwd=SCRIPT_DIR,
+            capture_output=True,
+            text=True
+        )
+
+        if result.returncode == 0:
+            print("Updated successfully!")
+        else:
+            print("Update failed - continuing with current version")
+
+        print()
+
+    except FileNotFoundError:
+        print("Git not found - skipping update check")
+        print()
+    except Exception:
+        print("Could not check for updates - continuing")
+        print()
 
 # Valid 3-letter airport codes (common ones to filter out false positives)
 # We'll be more restrictive - only match codes that appear in flight context
