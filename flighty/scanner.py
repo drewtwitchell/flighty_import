@@ -109,11 +109,47 @@ def _build_or_query(terms, field="FROM"):
     return query
 
 
-def _optimized_search(mail, since_date, verbose=True):
-    """Execute optimized searches using combined OR queries.
+def _search_individual(mail, since_date, terms, field, all_ids, verbose=True):
+    """Fall back to individual searches when OR queries fail.
 
-    Instead of 55+ individual searches, we combine them into ~5 OR queries.
-    This reduces IMAP roundtrips from 55 to about 5, dramatically improving speed.
+    Args:
+        mail: IMAP connection
+        since_date: Date string for SINCE filter
+        terms: List of search terms
+        field: IMAP field (FROM, SUBJECT)
+        all_ids: Set to update with found IDs
+        verbose: Print progress
+
+    Returns:
+        Number of new emails found
+    """
+    found = 0
+    for i, term in enumerate(terms):
+        try:
+            criteria = f'(SINCE {since_date} ({field} "{term}"))'
+            ids = _imap_search_with_retry(mail, criteria)
+            if ids:
+                new_ids = ids - all_ids
+                if new_ids:
+                    all_ids.update(new_ids)
+                    found += len(new_ids)
+            time.sleep(IMAP_SEARCH_DELAY)
+        except Exception:
+            pass
+
+        if verbose and (i + 1) % 5 == 0:
+            print(".", end="", flush=True)
+
+    return found
+
+
+def _optimized_search(mail, since_date, verbose=True):
+    """Execute optimized searches using combined OR queries with fallback.
+
+    Strategy:
+    1. Try combined OR queries first (fast - fewer roundtrips)
+    2. If OR query fails or returns nothing, fall back to individual searches
+    3. Some IMAP servers don't support complex OR queries, so fallback is essential
 
     Args:
         mail: IMAP connection
@@ -125,16 +161,21 @@ def _optimized_search(mail, since_date, verbose=True):
     """
     all_ids = set()
     sources = {}
+    using_fallback = False
 
     # Strategy: Combine searches into groups using OR queries
-    # This reduces roundtrips from 55+ to about 5
+    # This reduces roundtrips from 55+ to about 10-15 (with smaller batches)
 
+    # Use smaller batches (5-8 terms) for better compatibility
     search_groups = [
-        ("Airlines (US)", AIRLINE_DOMAINS[:15], "FROM"),  # Major US + some international
-        ("Airlines (Intl)", AIRLINE_DOMAINS[15:30], "FROM"),  # More international
-        ("Booking Sites", AIRLINE_DOMAINS[30:], "FROM"),  # Booking sites + corporate
-        ("Airline Keywords", AIRLINE_KEYWORDS, "FROM"),  # Partial matches
-        ("Subject Keywords", SUBJECT_KEYWORDS, "SUBJECT"),  # Subject searches
+        ("Major US Airlines", AIRLINE_DOMAINS[:8], "FROM"),
+        ("More US Airlines", AIRLINE_DOMAINS[8:15], "FROM"),
+        ("European Airlines", AIRLINE_DOMAINS[15:23], "FROM"),
+        ("Asian/Other Airlines", AIRLINE_DOMAINS[23:30], "FROM"),
+        ("Booking Sites", AIRLINE_DOMAINS[30:38], "FROM"),
+        ("Travel/Corporate", AIRLINE_DOMAINS[38:], "FROM"),
+        ("Airline Keywords", AIRLINE_KEYWORDS, "FROM"),
+        ("Subject Keywords", SUBJECT_KEYWORDS, "SUBJECT"),
     ]
 
     total_groups = len(search_groups)
@@ -146,42 +187,41 @@ def _optimized_search(mail, since_date, verbose=True):
         if not terms:
             continue
 
-        # Build combined OR query
+        found_in_group = 0
+
+        # Try combined OR query first
         or_query = _build_or_query(terms, field)
-        if not or_query:
-            continue
+        if or_query:
+            criteria = f'(SINCE {since_date} {or_query})'
 
-        criteria = f'(SINCE {since_date} {or_query})'
+            try:
+                ids = _imap_search_with_retry(mail, criteria)
+                if ids:
+                    new_ids = ids - all_ids
+                    if new_ids:
+                        all_ids.update(new_ids)
+                        found_in_group = len(new_ids)
+            except Exception:
+                ids = set()
 
-        try:
-            ids = _imap_search_with_retry(mail, criteria)
-            if ids:
-                new_ids = ids - all_ids
-                if new_ids:
-                    all_ids.update(new_ids)
-                    sources[group_name] = len(new_ids)
-        except Exception:
-            # If combined query fails, fall back to individual searches
-            if verbose:
-                print(f" (using fallback)", end="", flush=True)
+            # If OR query returned nothing, try fallback
+            # (Some servers silently fail on complex queries)
+            if not ids and len(terms) > 1:
+                if verbose and not using_fallback:
+                    print(f" (server needs individual searches)", end="", flush=True)
+                    using_fallback = True
 
-            for term in terms:
-                try:
-                    criteria = f'(SINCE {since_date} ({field} "{term}"))'
-                    ids = _imap_search_with_retry(mail, criteria)
-                    if ids:
-                        new_ids = ids - all_ids
-                        if new_ids:
-                            all_ids.update(new_ids)
-                            sources[group_name] = sources.get(group_name, 0) + len(new_ids)
-                    time.sleep(IMAP_SEARCH_DELAY)
-                except Exception:
-                    pass
+                found_in_group = _search_individual(mail, since_date, terms, field, all_ids, verbose=False)
+
+        if found_in_group > 0:
+            sources[group_name] = found_in_group
 
         time.sleep(IMAP_BATCH_DELAY)
 
     if verbose:
         print()  # Newline after progress
+        if using_fallback:
+            print("    Note: Your email server required individual searches (slower but still works)")
 
     return all_ids, sources
 
