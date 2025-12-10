@@ -191,8 +191,8 @@ def display_scan_results(to_forward, skipped, duplicates_merged, processed):
         if new_flights:
             print("  │  NEW:")
             for flight in new_flights[:15]:
-                conf = flight.get("confirmation", "------")
-                flight_info = flight.get("flight_info", {})
+                conf = flight.get("confirmation") or "------"
+                flight_info = flight.get("flight_info") or {}
                 line = format_flight_line(
                     conf, flight_info,
                     airline=flight.get("airline"),
@@ -208,8 +208,8 @@ def display_scan_results(to_forward, skipped, duplicates_merged, processed):
                 print("  │")
             print("  │  UPDATES (flight details changed):")
             for flight in updates[:10]:
-                conf = flight.get("confirmation", "------")
-                flight_info = flight.get("flight_info", {})
+                conf = flight.get("confirmation") or "------"
+                flight_info = flight.get("flight_info") or {}
                 line = format_flight_line(
                     conf, flight_info,
                     is_update=True,
@@ -269,9 +269,9 @@ def display_scan_results(to_forward, skipped, duplicates_merged, processed):
         print("  │")
 
         for item in skipped[:5]:
-            conf = item.get("confirmation", "------")
-            reason = item.get("reason", "")
-            flight_info = item.get("flight_info", {})
+            conf = item.get("confirmation") or "------"
+            reason = item.get("reason") or ""
+            flight_info = item.get("flight_info") or {}
             airports = flight_info.get("airports", [])
             valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
             route = " → ".join(valid_airports[:2]) if valid_airports else ""
@@ -344,12 +344,12 @@ def forward_flights(config, to_forward, processed, dry_run):
         print()
 
         for i, flight in enumerate(to_forward):
-            conf = flight.get("confirmation", "------")
-            flight_info = flight.get("flight_info", {})
-            airports = flight_info.get("airports", [])
-            dates = flight_info.get("dates", [])
-            flights_list = flight_info.get("flights", [])
-            email_count = flight.get("email_count", 1)
+            conf = flight.get("confirmation") or "------"
+            flight_info = flight.get("flight_info") or {}
+            airports = flight_info.get("airports") or []
+            dates = flight_info.get("dates") or []
+            flights_list = flight_info.get("flights") or []
+            email_count = flight.get("email_count") or 1
             email_date = flight.get("email_date")
             valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
 
@@ -403,11 +403,11 @@ def forward_flights(config, to_forward, processed, dry_run):
     failed = 0
 
     for i, flight in enumerate(to_forward):
-        conf = flight.get("confirmation", "------")
-        flight_info = flight.get("flight_info", {})
-        airports = flight_info.get("airports", [])
-        dates = flight_info.get("dates", [])
-        flights_list = flight_info.get("flights", [])
+        conf = flight.get("confirmation") or "------"
+        flight_info = flight.get("flight_info") or {}
+        airports = flight_info.get("airports") or []
+        dates = flight_info.get("dates") or []
+        flights_list = flight_info.get("flights") or []
         valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
 
         route = " → ".join(valid_airports[:2]) if valid_airports else ""
