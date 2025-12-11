@@ -17,7 +17,8 @@ from .parser import (
     generate_content_hash,
     create_flight_fingerprint,
     is_marketing_email,
-    get_email_type
+    get_email_type,
+    verify_and_correct_flight_info
 )
 from .email_handler import decode_header_value, get_email_body, parse_email_date
 
@@ -539,6 +540,11 @@ def scan_for_flights(mail, config, folder, processed):
 
             # Pass HTML body for schema.org extraction (most reliable source)
             flight_info = extract_flight_info(full_body, email_date=email_date, html_body=html_body)
+
+            # If we have a flight number, verify the route online
+            # This ensures we print the correct airports
+            if flight_info and flight_info.get('flight_numbers'):
+                flight_info = verify_and_correct_flight_info(flight_info, verify_online=True)
 
             # Skip if already processed
             if confirmation and confirmation in already_processed:

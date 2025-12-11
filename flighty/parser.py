@@ -668,20 +668,19 @@ def validate_airport_code(code):
 _FLIGHT_VERIFICATION_CACHE = {}
 
 
-def verify_flight_exists(airline_code, flight_num, origin=None, dest=None):
+def verify_flight_exists(airline_code, flight_num, date_str=None):
     """Verify a flight exists using FlightAware.
 
-    This is a quick check to confirm a flight number is real.
+    This checks if the flight number is real and gets the route.
     Results are cached to avoid repeated lookups.
 
     Args:
         airline_code: 2-letter IATA code (e.g., "B6")
         flight_num: Flight number (e.g., "123")
-        origin: Optional origin airport code
-        dest: Optional destination airport code
+        date_str: Optional date string to verify flight on specific day
 
     Returns:
-        Dict with 'exists', 'origin', 'dest' if found, or None if couldn't verify
+        Dict with 'exists', 'origin', 'dest', 'verified_route' if found, or None if couldn't verify
     """
     cache_key = f"{airline_code}{flight_num}"
     if cache_key in _FLIGHT_VERIFICATION_CACHE:
@@ -692,22 +691,37 @@ def verify_flight_exists(airline_code, flight_num, origin=None, dest=None):
         url = f"https://www.flightaware.com/live/flight/{airline_code}{flight_num}"
         req = urllib.request.Request(
             url,
-            headers={'User-Agent': 'Mozilla/5.0 (compatible; FlightyEmailForwarder/1.0)'}
+            headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
         )
 
-        with urllib.request.urlopen(req, timeout=5) as response:
+        with urllib.request.urlopen(req, timeout=8) as response:
             html = response.read().decode('utf-8', errors='ignore')
 
-            # Look for route information in the page
-            # FlightAware shows origin/destination in the page title or content
-            result = {'exists': True, 'origin': None, 'dest': None}
+            result = {'exists': True, 'origin': None, 'dest': None, 'verified_route': False}
 
-            # Try to extract airports from the page
-            # Pattern: "BOS → LAS" or "BOS to LAS" in the page content
-            route_match = re.search(r'\b([A-Z]{3})\s*(?:→|to|–|-)\s*([A-Z]{3})\b', html)
-            if route_match:
-                result['origin'] = route_match.group(1)
-                result['dest'] = route_match.group(2)
+            # FlightAware shows routes in multiple formats, try to find them
+            # Pattern 1: In the page content as "BOS - SFO" or "BOS → SFO"
+            route_patterns = [
+                r'<title>[^<]*\b([A-Z]{3})\s*[-→–]\s*([A-Z]{3})\b',  # In title
+                r'Origin</th>\s*<td[^>]*>\s*<[^>]*>([A-Z]{3})<',  # Origin field
+                r'Destination</th>\s*<td[^>]*>\s*<[^>]*>([A-Z]{3})<',  # Dest field
+                r'\b([A-Z]{3})\s*(?:→|->|–|-|to)\s*([A-Z]{3})\b',  # General route pattern
+            ]
+
+            for pattern in route_patterns:
+                match = re.search(pattern, html, re.IGNORECASE)
+                if match:
+                    groups = match.groups()
+                    if len(groups) >= 2:
+                        result['origin'] = groups[0].upper()
+                        result['dest'] = groups[1].upper()
+                        result['verified_route'] = True
+                        break
+                    elif len(groups) == 1:
+                        if not result['origin']:
+                            result['origin'] = groups[0].upper()
+                        elif not result['dest']:
+                            result['dest'] = groups[0].upper()
 
             _FLIGHT_VERIFICATION_CACHE[cache_key] = result
             return result
@@ -716,6 +730,87 @@ def verify_flight_exists(airline_code, flight_num, origin=None, dest=None):
         # Couldn't verify - that's okay, we'll rely on other methods
         _FLIGHT_VERIFICATION_CACHE[cache_key] = None
         return None
+
+
+def verify_route_for_flight(airline_code, flight_num, proposed_origin, proposed_dest):
+    """Verify that a proposed route matches the actual flight route.
+
+    Args:
+        airline_code: 2-letter IATA code
+        flight_num: Flight number
+        proposed_origin: Airport code we think is the origin
+        proposed_dest: Airport code we think is the destination
+
+    Returns:
+        Tuple of (is_correct, actual_origin, actual_dest)
+        - is_correct: True if proposed route matches actual route
+        - actual_origin/dest: The verified route (or None if couldn't verify)
+    """
+    verified = verify_flight_exists(airline_code, flight_num)
+
+    if not verified or not verified.get('verified_route'):
+        # Couldn't verify - return unknown
+        return None, None, None
+
+    actual_origin = verified.get('origin')
+    actual_dest = verified.get('dest')
+
+    # Check if proposed route matches actual route
+    if actual_origin and actual_dest:
+        if proposed_origin == actual_origin and proposed_dest == actual_dest:
+            return True, actual_origin, actual_dest
+        # Maybe they got the direction wrong?
+        if proposed_origin == actual_dest and proposed_dest == actual_origin:
+            return True, actual_origin, actual_dest
+        # Doesn't match
+        return False, actual_origin, actual_dest
+
+    return None, actual_origin, actual_dest
+
+
+def verify_and_correct_flight_info(flight_info, verify_online=True):
+    """Verify and potentially correct flight info using online lookup.
+
+    If we have a flight number, look up the actual route and use that
+    instead of what we extracted (which might be wrong).
+
+    Args:
+        flight_info: Dict with airports, route, flight_numbers, etc.
+        verify_online: Whether to do online verification
+
+    Returns:
+        Updated flight_info dict with verified/corrected route
+    """
+    if not verify_online or not flight_info:
+        return flight_info
+
+    flight_numbers = flight_info.get('flight_numbers', [])
+    if not flight_numbers:
+        return flight_info
+
+    # Try to verify with the first flight number
+    for fn in flight_numbers[:1]:
+        # Parse flight number - could be "B6 123" or "B6123"
+        match = re.match(r'^([A-Z]{2})\s*(\d+)$', fn)
+        if not match:
+            continue
+
+        airline_code = match.group(1)
+        flight_num = match.group(2)
+
+        verified = verify_flight_exists(airline_code, flight_num)
+        if verified and verified.get('verified_route'):
+            actual_origin = verified.get('origin')
+            actual_dest = verified.get('dest')
+
+            if actual_origin and actual_dest:
+                # Update flight info with verified route
+                flight_info['route'] = (actual_origin, actual_dest)
+                flight_info['airports'] = [actual_origin, actual_dest]
+                flight_info['route_verified'] = True
+                break
+
+    return flight_info
 
 
 def _verify_airport_in_context(code, airport_name, text):
@@ -784,15 +879,16 @@ def _verify_airport_in_context(code, airport_name, text):
 def extract_airports_from_text(text, from_addr=None, verify_online=False):
     """Extract and validate airport codes from text.
 
-    STRICT extraction with airline cross-validation:
+    SMART extraction with airline cross-validation:
     1. Flight verification via FlightAware (if enabled and flight number found)
     2. City (CODE) format - highest confidence, always accepted
     3. CODE → CODE route format - high confidence, always accepted
     4. Airline hub airports when airline is identified
-    5. Contextual patterns with city name verification
+    5. Contextual patterns - accepted if strong flight evidence OR city verified
     6. City name recognition (Boston to Las Vegas)
 
-    Does NOT accept random 3-letter codes without strong evidence.
+    Strong flight evidence = airline detected + (flight number OR confirmation pattern)
+    With strong evidence, we trust airport codes even without city name verification.
 
     Args:
         text: Email text to search
@@ -812,6 +908,19 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False):
     # If we found flight numbers, use the airline from those
     if flight_numbers and not airline:
         airline = flight_numbers[0][2]  # airline name from first flight number
+
+    # Determine if we have strong flight evidence
+    # Strong evidence means we're confident this is a real flight email
+    text_lower = text.lower()
+    has_confirmation_pattern = bool(re.search(
+        r'(?:confirmation|booking|reservation|itinerary|pnr|record.?locator)[:\s#]+[A-Z0-9]{5,8}',
+        text, re.IGNORECASE
+    ))
+    has_flight_number = len(flight_numbers) > 0
+    has_airline = airline is not None
+
+    # Strong evidence: airline + (flight number OR confirmation)
+    strong_flight_evidence = has_airline and (has_flight_number or has_confirmation_pattern)
 
     # Strategy 0: If we have a flight number and online verification is enabled,
     # try to get the actual route from FlightAware
@@ -875,8 +984,8 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False):
                         seen.add(code)
                         airports.append((code, name, 'airline_hub'))
 
-    # Strategy 4: Contextual patterns WITH verification
-    # Only accept if the city name also appears in the email OR it's an airline hub
+    # Strategy 4: Contextual patterns
+    # Accept if: strong flight evidence OR city name verified OR airline hub
     context_pattern = re.compile(
         r'(?:depart(?:ure|ing|s)?|arriv(?:al|ing|es)?|from|to|origin|destination|airport)[:\s]+([A-Z]{3})\b',
         re.IGNORECASE
@@ -887,23 +996,27 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False):
             continue
         is_valid, name = validate_airport_code(code)
         if is_valid:
-            # Accept if: city name in text OR it's an airline hub
+            # Accept if: strong flight evidence OR city name in text OR airline hub
             city_verified = _verify_airport_in_context(code, name, text)
             airline_verified = validate_airport_for_airline(code, airline) in ('hub', 'served')
 
-            if city_verified or airline_verified:
+            if strong_flight_evidence or city_verified or airline_verified:
                 seen.add(code)
-                confidence = 'airline_verified' if airline_verified else 'verified'
+                if strong_flight_evidence:
+                    confidence = 'flight_context'
+                elif airline_verified:
+                    confidence = 'airline_verified'
+                else:
+                    confidence = 'verified'
                 airports.append((code, name, confidence))
 
-    # Strategy 5: Look for 3-letter codes near strong flight context
-    # Must verify via city name OR airline hub
+    # Strategy 5: Look for 3-letter codes near flight keywords
+    # Accept if: strong flight evidence OR city verified OR airline hub
     if len(airports) < 2:
-        strong_flight_context = [
+        flight_keywords = [
             'flight', 'airport', 'terminal', 'gate', 'boarding',
             'depart', 'arrive', 'itinerary', 'confirmation'
         ]
-        text_lower = text.lower()
 
         # Find all 3-letter uppercase sequences
         all_codes = re.findall(r'\b([A-Z]{3})\b', text)
@@ -917,27 +1030,27 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False):
             if not is_valid:
                 continue
 
-            # Must be near flight context
+            # Must be near flight keywords
             code_positions = [m.start() for m in re.finditer(r'\b' + code + r'\b', text)]
-            near_context = False
+            near_keywords = False
             for pos in code_positions:
                 context_start = max(0, pos - 80)
                 context_end = min(len(text_lower), pos + 80)
                 context = text_lower[context_start:context_end]
-                if any(kw in context for kw in strong_flight_context):
-                    near_context = True
+                if any(kw in context for kw in flight_keywords):
+                    near_keywords = True
                     break
 
-            if not near_context:
+            if not near_keywords:
                 continue
 
-            # Verify via city name OR airline
+            # Accept if: strong flight evidence OR city verified OR airline hub
             city_verified = _verify_airport_in_context(code, name, text)
             airline_verified = validate_airport_for_airline(code, airline) in ('hub', 'served')
 
-            if city_verified or airline_verified:
+            if strong_flight_evidence or city_verified or airline_verified:
                 seen.add(code)
-                airports.append((code, name, 'context_verified'))
+                airports.append((code, name, 'keyword_context'))
                 if len(airports) >= 2:
                     break
 

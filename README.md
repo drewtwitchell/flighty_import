@@ -271,7 +271,9 @@ crontab -e
 
 ## Version History
 
-- **v2.12.0** - Airline-aware airport validation (uses airline hubs, flight numbers, FlightAware verification)
+- **v2.13.0** - FlightAware route verification; smart airport acceptance with strong flight evidence
+- **v2.12.1** - Fix false positive city name matches (San/SAN)
+- **v2.12.0** - Airline-aware airport validation (uses airline hubs, flight numbers)
 - **v2.11.0** - Strict airport code validation (codes must be verified against email content)
 - **v2.10.0** - Marketing email filtering (ignores promotional emails from airlines/travel sites)
 - **v2.9.0** - City name recognition ("Boston to Las Vegas" → BOS, LAS), smart flight merging
