@@ -556,6 +556,7 @@ def scan_for_flights(mail, config, folder, processed):
     download_count = 0
     failed_downloads = 0
     marketing_filtered = 0  # Track marketing emails filtered out
+    cancelled_codes = set()  # Track confirmation codes from cancellation emails
 
     for candidate in flight_candidates:
         download_count += 1
@@ -600,12 +601,18 @@ def scan_for_flights(mail, config, folder, processed):
             confirmation = extract_confirmation_code(subject, full_body)
             content_hash = generate_content_hash(subject, full_body)
 
-            # Check if this is a marketing/promotional email
+            # Check if this is a marketing/promotional or cancellation email
             # Marketing emails mention destinations to entice booking but aren't actual confirmations
+            # Cancellation emails indicate a flight was cancelled - don't forward these
             email_type = get_email_type(subject, full_body, has_confirmation_code=confirmation is not None)
             if email_type == 'marketing':
                 marketing_filtered += 1
                 continue  # Skip marketing emails
+            if email_type == 'cancellation':
+                # Track cancelled confirmation codes to exclude later
+                if confirmation:
+                    cancelled_codes.add(confirmation)
+                continue  # Skip cancellation emails
 
             # Extract flight info from email content
             # Uses schema.org structured data if available, falls back to text parsing
@@ -724,6 +731,13 @@ def scan_for_flights(mail, config, folder, processed):
         else:
             print("      No related emails found")
 
+    # Remove any cancelled flights from the results
+    cancelled_count = 0
+    for code in cancelled_codes:
+        if code in flights_found:
+            cancelled_count += 1
+            del flights_found[code]
+
     total_time = time.time() - folder_start
 
     # Summary line
@@ -734,6 +748,8 @@ def scan_for_flights(mail, config, folder, processed):
         summary_parts.append(f"{skipped_count} already imported")
     if marketing_filtered > 0:
         summary_parts.append(f"{marketing_filtered} marketing skipped")
+    if cancelled_count > 0:
+        summary_parts.append(f"{cancelled_count} cancelled")
     if failed_downloads > 0:
         summary_parts.append(f"{failed_downloads} failed")
     print(f"  ✓ {folder}: {', '.join(summary_parts)} ({total_time:.1f}s)")

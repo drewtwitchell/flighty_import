@@ -371,51 +371,101 @@ def forward_flights(config, to_forward, processed, dry_run):
         print(f"  The following {len(to_forward)} flights WOULD be forwarded to Flighty:")
         print()
 
-        for i, flight in enumerate(to_forward):
-            conf = flight.get("confirmation") or "------"
+        # Group flights by month for easier reading
+        import re
+        from collections import defaultdict
+
+        def parse_month_year(date_str):
+            """Extract month and year from date string like 'April 28, 2025'."""
+            if not date_str:
+                return ("Unknown", 9999)
+            # Try to match "Month DD, YYYY" or "Month YYYY" formats
+            match = re.match(r'(\w+)\s+\d{1,2}?,?\s*(\d{4})', date_str)
+            if match:
+                return (match.group(1), int(match.group(2)))
+            match = re.match(r'(\w+)\s+(\d{4})', date_str)
+            if match:
+                return (match.group(1), int(match.group(2)))
+            return ("Unknown", 9999)
+
+        # Month order for sorting
+        month_order = {
+            'January': 1, 'February': 2, 'March': 3, 'April': 4,
+            'May': 5, 'June': 6, 'July': 7, 'August': 8,
+            'September': 9, 'October': 10, 'November': 11, 'December': 12,
+            'Unknown': 13
+        }
+
+        # Group by month-year
+        flights_by_month = defaultdict(list)
+        for flight in to_forward:
             flight_info = flight.get("flight_info") or {}
-            airports = flight_info.get("airports") or []
             dates = flight_info.get("dates") or []
-            flights_list = flight_info.get("flight_numbers") or []
-            route_tuple = flight_info.get("route")
-            email_count = flight.get("email_count") or 1
-            email_date = flight.get("email_date")
-
-            # Use route tuple if available
-            if route_tuple:
-                valid_airports = list(route_tuple)
-            else:
-                valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
-
-            # Format route with airport names
-            if len(valid_airports) >= 2:
-                origin = get_airport_display(valid_airports[0])
-                dest = get_airport_display(valid_airports[1])
-                route = f"{origin} → {dest}"
-            elif valid_airports:
-                route = get_airport_display(valid_airports[0])
-            else:
-                route = ""
-
             date = dates[0] if dates else ""
-            flight_num = flights_list[0] if flights_list else ""
+            month, year = parse_month_year(date)
+            key = (year, month_order.get(month, 13), month)
+            flights_by_month[key].append(flight)
 
-            print(f"  ┌─ Flight {i+1} of {len(to_forward)} ─────────────────────────────────────")
-            print(f"  │  Confirmation: {conf}")
-            if route:
-                print(f"  │  Route:        {route}")
-            if flight_num:
-                print(f"  │  Flight:       {flight_num}")
-            if date:
-                print(f"  │  Flight Date:  {date}")
-            if email_date:
-                print(f"  │  Email Date:   {email_date.strftime('%Y-%m-%d %H:%M') if hasattr(email_date, 'strftime') else email_date}")
-            if email_count > 1:
-                print(f"  │  Merged {email_count} emails - using most recent")
-            if flight.get("is_update"):
-                print(f"  │  UPDATE: Flight details changed since last import")
-            print(f"  └────────────────────────────────────────────────────────────")
+        # Sort by year, then month
+        sorted_months = sorted(flights_by_month.keys())
+
+        flight_num_counter = 0
+        for (year, month_num, month_name) in sorted_months:
+            flights = flights_by_month[(year, month_num, month_name)]
+
+            # Print month header
             print()
+            print(f"  ══════════════════════════════════════════════════════════════")
+            print(f"   {month_name.upper()} {year}  ({len(flights)} flights)")
+            print(f"  ══════════════════════════════════════════════════════════════")
+            print()
+
+            for flight in flights:
+                flight_num_counter += 1
+                conf = flight.get("confirmation") or "------"
+                flight_info = flight.get("flight_info") or {}
+                airports = flight_info.get("airports") or []
+                dates = flight_info.get("dates") or []
+                flights_list = flight_info.get("flight_numbers") or []
+                route_tuple = flight_info.get("route")
+                email_count = flight.get("email_count") or 1
+                email_date = flight.get("email_date")
+
+                # Use route tuple if available
+                if route_tuple:
+                    valid_airports = list(route_tuple)
+                else:
+                    valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+                # Format route with airport names
+                if len(valid_airports) >= 2:
+                    origin = get_airport_display(valid_airports[0])
+                    dest = get_airport_display(valid_airports[1])
+                    route = f"{origin} → {dest}"
+                elif valid_airports:
+                    route = get_airport_display(valid_airports[0])
+                else:
+                    route = ""
+
+                date = dates[0] if dates else ""
+                flight_num = flights_list[0] if flights_list else ""
+
+                print(f"  ┌─ Flight {flight_num_counter} of {len(to_forward)} ─────────────────────────────────────")
+                print(f"  │  Confirmation: {conf}")
+                if route:
+                    print(f"  │  Route:        {route}")
+                if flight_num:
+                    print(f"  │  Flight:       {flight_num}")
+                if date:
+                    print(f"  │  Flight Date:  {date}")
+                if email_date:
+                    print(f"  │  Email Date:   {email_date.strftime('%Y-%m-%d %H:%M') if hasattr(email_date, 'strftime') else email_date}")
+                if email_count > 1:
+                    print(f"  │  Merged {email_count} emails - using most recent")
+                if flight.get("is_update"):
+                    print(f"  │  UPDATE: Flight details changed since last import")
+                print(f"  └────────────────────────────────────────────────────────────")
+                print()
 
         print("  ═" * 32)
         print()

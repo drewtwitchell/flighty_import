@@ -221,7 +221,7 @@ def is_marketing_email(subject, body):
 
 
 def get_email_type(subject, body, has_confirmation_code=False):
-    """Classify an email as booking, marketing, or unknown.
+    """Classify an email as booking, marketing, cancellation, or unknown.
 
     Args:
         subject: Email subject line
@@ -229,8 +229,42 @@ def get_email_type(subject, body, has_confirmation_code=False):
         has_confirmation_code: Whether a confirmation code was found
 
     Returns:
-        String: 'booking', 'marketing', or 'unknown'
+        String: 'booking', 'marketing', 'cancellation', or 'unknown'
     """
+    subject_lower = subject.lower() if subject else ""
+    body_lower = body.lower() if body else ""
+
+    # Check for cancellation indicators first
+    cancellation_subject_patterns = [
+        r'\bcancel+ed\b',           # "cancelled" or "canceled"
+        r'\bcancel+ation\b',        # "cancellation"
+        r'\bflight\s+cancel',       # "flight cancelled"
+        r'\btrip\s+cancel',         # "trip cancelled"
+        r'\bbooking\s+cancel',      # "booking cancelled"
+        r'\breservation\s+cancel',  # "reservation cancelled"
+        r'\bhas\s+been\s+cancel',   # "has been cancelled"
+        r'\bwas\s+cancel',          # "was cancelled"
+        r'\brefund\s+confirm',      # "refund confirmation"
+        r'\brefund\s+processed',    # "refund processed"
+    ]
+
+    for pattern in cancellation_subject_patterns:
+        if re.search(pattern, subject_lower):
+            return 'cancellation'
+
+    # Check body for strong cancellation indicators
+    cancellation_body_patterns = [
+        r'your\s+(?:flight|trip|booking|reservation)\s+(?:has\s+been\s+)?cancel+ed',
+        r'we\s+(?:have\s+)?cancel+ed\s+your',
+        r'cancel+ation\s+(?:confirm|notice|notification)',
+        r'this\s+(?:flight|booking|reservation)\s+(?:has\s+been\s+)?cancel+ed',
+        r'your\s+refund\s+(?:has\s+been\s+|is\s+)?(?:processed|confirmed)',
+    ]
+
+    for pattern in cancellation_body_patterns:
+        if re.search(pattern, body_lower):
+            return 'cancellation'
+
     is_marketing, confidence, reason = is_marketing_email(subject, body)
 
     # If we found a confirmation code, it's very likely a real booking
