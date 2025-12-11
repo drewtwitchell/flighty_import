@@ -734,18 +734,33 @@ def _verify_airport_in_context(code, airport_name, text):
     """
     text_lower = text.lower()
 
+    # Helper to check for word with boundaries (avoid "san" matching "san francisco")
+    def word_in_text(word, text):
+        if len(word) < 4:
+            return False  # Too short, too many false positives
+        # Use word boundary check
+        pattern = r'\b' + re.escape(word) + r'\b'
+        return bool(re.search(pattern, text, re.IGNORECASE))
+
     # Get the friendly name which is usually the city
     friendly = FRIENDLY_NAMES.get(code, '')
 
     # Check if city name appears in text
     if friendly:
-        # Handle multi-word names like "New York JFK" -> check for "new york"
-        city_parts = friendly.lower().split()
-        # Check the first word or first two words (the city part)
-        if city_parts[0] in text_lower:
+        friendly_lower = friendly.lower()
+        # For multi-word city names, check the full name first
+        if len(friendly_lower) >= 4 and word_in_text(friendly_lower, text_lower):
             return True
-        if len(city_parts) >= 2 and f"{city_parts[0]} {city_parts[1]}" in text_lower:
-            return True
+        # Also check just the city part (first word or two) but only if 5+ chars
+        city_parts = friendly_lower.split()
+        if len(city_parts) >= 2:
+            two_word = f"{city_parts[0]} {city_parts[1]}"
+            if len(two_word) >= 5 and word_in_text(two_word, text_lower):
+                return True
+        # Single word city names must be 5+ chars to avoid "san", "los", etc.
+        if len(city_parts) == 1 and len(city_parts[0]) >= 5:
+            if word_in_text(city_parts[0], text_lower):
+                return True
 
     # Check if airport name from database appears
     if airport_name:
@@ -753,14 +768,14 @@ def _verify_airport_in_context(code, airport_name, text):
         name_lower = airport_name.lower()
         # Common patterns: "City International", "City Municipal", etc.
         for word in name_lower.split():
-            if len(word) >= 4 and word not in ('international', 'airport', 'regional', 'municipal', 'memorial', 'county', 'field'):
-                if word in text_lower:
+            if len(word) >= 5 and word not in ('international', 'airport', 'regional', 'municipal', 'memorial', 'county', 'field'):
+                if word_in_text(word, text_lower):
                     return True
 
     # Check our city-to-airport mapping in reverse
     for city, mapped_code in CITY_TO_AIRPORT.items():
-        if mapped_code == code and len(city) >= 4:
-            if city in text_lower:
+        if mapped_code == code and len(city) >= 5:  # Require 5+ chars
+            if word_in_text(city, text_lower):
                 return True
 
     return False

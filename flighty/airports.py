@@ -132,7 +132,7 @@ CITY_TO_AIRPORT = {
     'philadelphia': 'PHL', 'philly': 'PHL', 'phl': 'PHL',
     'salt lake city': 'SLC', 'salt lake': 'SLC', 'slc': 'SLC',
     'washington': 'DCA', 'washington dc': 'DCA', 'dc': 'DCA', 'reagan': 'DCA',
-    'san diego': 'SAN', 'san': 'SAN',
+    'san diego': 'SAN',
     'baltimore': 'BWI', 'bwi': 'BWI',
     'tampa': 'TPA', 'tpa': 'TPA',
     'austin': 'AUS', 'aus': 'AUS',
