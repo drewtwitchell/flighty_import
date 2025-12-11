@@ -15,7 +15,9 @@ from .parser import (
     extract_confirmation_code,
     extract_flight_info,
     generate_content_hash,
-    create_flight_fingerprint
+    create_flight_fingerprint,
+    is_marketing_email,
+    get_email_type
 )
 from .email_handler import decode_header_value, get_email_body, parse_email_date
 
@@ -483,6 +485,7 @@ def scan_for_flights(mail, config, folder, processed):
     skipped_count = 0
     download_count = 0
     failed_downloads = 0
+    marketing_filtered = 0  # Track marketing emails filtered out
 
     for candidate in flight_candidates:
         download_count += 1
@@ -526,7 +529,16 @@ def scan_for_flights(mail, config, folder, processed):
             email_date = parse_email_date(date_str)
             confirmation = extract_confirmation_code(subject, full_body)
             content_hash = generate_content_hash(subject, full_body)
-            flight_info = extract_flight_info(full_body, email_date=email_date)
+
+            # Check if this is a marketing/promotional email
+            # Marketing emails mention destinations to entice booking but aren't actual confirmations
+            email_type = get_email_type(subject, full_body, has_confirmation_code=confirmation is not None)
+            if email_type == 'marketing':
+                marketing_filtered += 1
+                continue  # Skip marketing emails
+
+            # Pass HTML body for schema.org extraction (most reliable source)
+            flight_info = extract_flight_info(full_body, email_date=email_date, html_body=html_body)
 
             # Skip if already processed
             if confirmation and confirmation in already_processed:
@@ -583,6 +595,8 @@ def scan_for_flights(mail, config, folder, processed):
     print("  │")
     print(f"  │   New flights found:        {flight_count}")
     print(f"  │   Already imported:         {skipped_count}")
+    if marketing_filtered > 0:
+        print(f"  │   Marketing emails skipped: {marketing_filtered}")
     if failed_downloads > 0:
         print(f"  │   Failed downloads:         {failed_downloads} (will retry next run)")
     print(f"  │   Total time for folder:    {total_time:.1f}s")
@@ -591,11 +605,174 @@ def scan_for_flights(mail, config, folder, processed):
     return flights_found, skipped_confirmations
 
 
+def _normalize_route(flight_info):
+    """Get a normalized route string for comparison."""
+    route = flight_info.get("route")
+    if route:
+        return f"{route[0]}-{route[1]}"
+    airports = flight_info.get("airports", [])
+    if len(airports) >= 2:
+        return f"{airports[0]}-{airports[1]}"
+    return None
+
+
+def _normalize_date(flight_info):
+    """Get a normalized date string for comparison."""
+    dates = flight_info.get("dates", [])
+    if dates:
+        # Extract just month and day for comparison (ignore year variations)
+        date_str = dates[0].lower()
+        # Remove year to match "january 15" regardless of year
+        import re
+        date_str = re.sub(r',?\s*\d{4}', '', date_str).strip()
+        return date_str
+    return None
+
+
+def _merge_similar_flights(all_flights):
+    """Merge flight groups that are actually the same flight.
+
+    Flights should be merged if they have:
+    - Same confirmation code (regardless of how they were keyed)
+    - Same route AND same date (even with different/missing confirmation codes)
+    - Same airline AND same route AND similar dates
+
+    Returns:
+        Merged dict of flights
+    """
+    merged = {}
+
+    # First pass: collect all confirmation codes and their associated data
+    conf_to_keys = {}  # confirmation -> list of keys that have this confirmation
+    route_date_to_keys = {}  # "route|date" -> list of keys
+
+    for key, emails in all_flights.items():
+        # Get the best info from all emails in this group
+        for email in emails:
+            conf = email.get("confirmation")
+            flight_info = email.get("flight_info", {})
+            route = _normalize_route(flight_info)
+            date = _normalize_date(flight_info)
+
+            # Track by confirmation code
+            if conf:
+                if conf not in conf_to_keys:
+                    conf_to_keys[conf] = set()
+                conf_to_keys[conf].add(key)
+
+            # Track by route + date
+            if route and date:
+                route_date = f"{route}|{date}"
+                if route_date not in route_date_to_keys:
+                    route_date_to_keys[route_date] = set()
+                route_date_to_keys[route_date].add(key)
+
+    # Build merge groups - keys that should be combined
+    key_to_group = {}  # key -> group_id
+    group_to_keys = {}  # group_id -> set of keys
+    next_group = 0
+
+    # Merge by confirmation code
+    for conf, keys in conf_to_keys.items():
+        if len(keys) > 1:
+            # Multiple keys have the same confirmation - merge them
+            keys_list = list(keys)
+            # Check if any of these keys already have a group
+            existing_groups = set()
+            for k in keys_list:
+                if k in key_to_group:
+                    existing_groups.add(key_to_group[k])
+
+            if existing_groups:
+                # Merge into the first existing group
+                target_group = min(existing_groups)
+                for k in keys_list:
+                    key_to_group[k] = target_group
+                    if target_group not in group_to_keys:
+                        group_to_keys[target_group] = set()
+                    group_to_keys[target_group].add(k)
+                # Merge other groups into target
+                for g in existing_groups:
+                    if g != target_group and g in group_to_keys:
+                        for k in group_to_keys[g]:
+                            key_to_group[k] = target_group
+                            group_to_keys[target_group].add(k)
+                        del group_to_keys[g]
+            else:
+                # Create new group
+                for k in keys_list:
+                    key_to_group[k] = next_group
+                group_to_keys[next_group] = set(keys_list)
+                next_group += 1
+
+    # Merge by route + date
+    for route_date, keys in route_date_to_keys.items():
+        if len(keys) > 1:
+            keys_list = list(keys)
+            existing_groups = set()
+            for k in keys_list:
+                if k in key_to_group:
+                    existing_groups.add(key_to_group[k])
+
+            if existing_groups:
+                target_group = min(existing_groups)
+                for k in keys_list:
+                    key_to_group[k] = target_group
+                    if target_group not in group_to_keys:
+                        group_to_keys[target_group] = set()
+                    group_to_keys[target_group].add(k)
+                for g in existing_groups:
+                    if g != target_group and g in group_to_keys:
+                        for k in group_to_keys[g]:
+                            key_to_group[k] = target_group
+                            group_to_keys[target_group].add(k)
+                        del group_to_keys[g]
+            else:
+                for k in keys_list:
+                    key_to_group[k] = next_group
+                group_to_keys[next_group] = set(keys_list)
+                next_group += 1
+
+    # Now build the merged result
+    processed_keys = set()
+
+    for key, emails in all_flights.items():
+        if key in processed_keys:
+            continue
+
+        if key in key_to_group:
+            # This key is part of a merge group
+            group_id = key_to_group[key]
+            all_keys_in_group = group_to_keys.get(group_id, {key})
+
+            # Combine all emails from all keys in this group
+            combined_emails = []
+            best_conf = None
+            for k in all_keys_in_group:
+                if k in all_flights:
+                    combined_emails.extend(all_flights[k])
+                    # Find the best confirmation code from any email
+                    for email in all_flights[k]:
+                        if email.get("confirmation") and not best_conf:
+                            best_conf = email.get("confirmation")
+                processed_keys.add(k)
+
+            # Use the confirmation code as the key if we have one
+            merge_key = best_conf if best_conf else key
+            merged[merge_key] = combined_emails
+        else:
+            # Not part of a merge group - keep as is
+            merged[key] = emails
+            processed_keys.add(key)
+
+    return merged
+
+
 def select_latest_flights(all_flights, processed):
     """For each confirmation, select the latest email.
 
-    For same-day flight changes/updates, we always take the most recent email
-    for each confirmation code to ensure we forward the latest itinerary.
+    First merges flights that are actually the same (same confirmation code,
+    or same route+date), then selects the most recent email for each.
 
     Args:
         all_flights: Dict of confirmation -> list of flight data
@@ -604,6 +781,9 @@ def select_latest_flights(all_flights, processed):
     Returns:
         Tuple: (to_forward list, skipped list, duplicates_merged int)
     """
+    # First, merge flights that should be together
+    all_flights = _merge_similar_flights(all_flights)
+
     to_forward = []
     skipped = []
     duplicates_merged = 0
@@ -613,6 +793,25 @@ def select_latest_flights(all_flights, processed):
         # the most recent version for same-day changes/updates
         emails.sort(key=lambda x: x["email_date"], reverse=True)
         latest = emails[0]
+
+        # Filter out flights with no useful data
+        # A valid flight should have either: confirmation code + airports, or just airports with route
+        flight_info = latest.get("flight_info", {})
+        has_confirmation = latest.get("confirmation") is not None
+        has_route = flight_info.get("route") is not None
+        has_airports = len(flight_info.get("airports", [])) >= 2
+
+        if not has_confirmation and not has_route and not has_airports:
+            # No confirmation and no valid route - skip as garbage
+            skipped.append({
+                "confirmation": conf_code,
+                "reason": "no confirmation code or valid route",
+                "subject": latest["subject"][:50],
+                "flight_info": flight_info,
+                "email_date": latest.get("email_date"),
+                "airline": latest.get("airline", "Unknown")
+            })
+            continue
 
         # Track how many duplicates we merged (for user feedback)
         if len(emails) > 1:

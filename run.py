@@ -139,10 +139,25 @@ def format_flight_line(conf, flight_info, airline=None, email_date=None, is_upda
     """Format a single flight for display."""
     airports = flight_info.get("airports", []) if flight_info else []
     dates = flight_info.get("dates", []) if flight_info else []
-    flights = flight_info.get("flights", []) if flight_info else []
+    flights = flight_info.get("flight_numbers", []) if flight_info else []
+    route_tuple = flight_info.get("route") if flight_info else None
 
-    valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
-    route = " → ".join(valid_airports[:2]) if valid_airports else ""
+    # Use route tuple if available, otherwise use airports list
+    if route_tuple:
+        valid_airports = list(route_tuple)
+    else:
+        valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+    # Format route with airport names
+    if len(valid_airports) >= 2:
+        origin = get_airport_display(valid_airports[0])
+        dest = get_airport_display(valid_airports[1])
+        route = f"{origin} → {dest}"
+    elif valid_airports:
+        route = get_airport_display(valid_airports[0])
+    else:
+        route = ""
+
     date = dates[0] if dates else ""
     flight_num = flights[0] if flights else ""
 
@@ -152,9 +167,9 @@ def format_flight_line(conf, flight_info, airline=None, email_date=None, is_upda
     if flight_num:
         parts.append(f"{flight_num:<10}")
     if route:
-        parts.append(f"{route:<15}")
+        parts.append(route)
     if date:
-        parts.append(f"{date}")
+        parts.append(f"  {date}")
 
     line = " ".join(parts)
 
@@ -348,12 +363,27 @@ def forward_flights(config, to_forward, processed, dry_run):
             flight_info = flight.get("flight_info") or {}
             airports = flight_info.get("airports") or []
             dates = flight_info.get("dates") or []
-            flights_list = flight_info.get("flights") or []
+            flights_list = flight_info.get("flight_numbers") or []
+            route_tuple = flight_info.get("route")
             email_count = flight.get("email_count") or 1
             email_date = flight.get("email_date")
-            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
 
-            route = " → ".join(valid_airports[:2]) if valid_airports else ""
+            # Use route tuple if available
+            if route_tuple:
+                valid_airports = list(route_tuple)
+            else:
+                valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+            # Format route with airport names
+            if len(valid_airports) >= 2:
+                origin = get_airport_display(valid_airports[0])
+                dest = get_airport_display(valid_airports[1])
+                route = f"{origin} → {dest}"
+            elif valid_airports:
+                route = get_airport_display(valid_airports[0])
+            else:
+                route = ""
+
             date = dates[0] if dates else ""
             flight_num = flights_list[0] if flights_list else ""
 
@@ -368,9 +398,9 @@ def forward_flights(config, to_forward, processed, dry_run):
             if email_date:
                 print(f"  │  Email Date:   {email_date.strftime('%Y-%m-%d %H:%M') if hasattr(email_date, 'strftime') else email_date}")
             if email_count > 1:
-                print(f"  │  ⚡ Multiple emails ({email_count}) - using most recent")
+                print(f"  │  Merged {email_count} emails - using most recent")
             if flight.get("is_update"):
-                print(f"  │  ⚠️  UPDATE: Flight details changed since last import")
+                print(f"  │  UPDATE: Flight details changed since last import")
             print(f"  └────────────────────────────────────────────────────────────")
             print()
 
@@ -407,9 +437,16 @@ def forward_flights(config, to_forward, processed, dry_run):
         flight_info = flight.get("flight_info") or {}
         airports = flight_info.get("airports") or []
         dates = flight_info.get("dates") or []
-        flights_list = flight_info.get("flights") or []
-        valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+        flights_list = flight_info.get("flight_numbers") or []
+        route_tuple = flight_info.get("route")
 
+        # Use route tuple if available
+        if route_tuple:
+            valid_airports = list(route_tuple)
+        else:
+            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+        # Format route with airport codes (keep short for header)
         route = " → ".join(valid_airports[:2]) if valid_airports else ""
         date = dates[0] if dates else ""
         flight_num = flights_list[0] if flights_list else ""

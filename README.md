@@ -16,6 +16,9 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 - **Crash protection** - Saves progress after each email, recovers from errors automatically
 - **Rate limit handling** - Automatically retries when email providers throttle sending
 - **9,800+ airport codes** - Full IATA database with common word filtering
+- **City name recognition** - Understands "Boston to Las Vegas" and converts to airport codes
+- **Marketing email filtering** - Automatically ignores promotional emails from airlines
+- **Smart flight merging** - Groups related emails by confirmation code or route+date
 
 ## How It Works
 
@@ -268,6 +271,10 @@ crontab -e
 
 ## Version History
 
+- **v2.10.0** - Marketing email filtering (ignores promotional emails from airlines/travel sites)
+- **v2.9.0** - City name recognition ("Boston to Las Vegas" → BOS, LAS), smart flight merging
+- **v2.8.6** - Fix duplicate detection for flights without confirmation codes
+- **v2.8.5** - Allow flight dates up to 10 years in the future
 - **v2.8.0** - Expanded to 75+ airlines/services (Brex, Ramp, regional airlines, travel agencies)
 - **v2.7.0** - Robust error handling, Windows compatibility, improved user messaging
 - **v2.6.0** - AOL optimization, comprehensive phase messaging

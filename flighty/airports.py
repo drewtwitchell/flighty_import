@@ -38,6 +38,22 @@ EXCLUDED_CODES = {
     'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ',
     'KKK', 'LLL', 'MMM', 'NNN', 'OOO', 'PPP', 'QQQ', 'RRR', 'SSS', 'TTT',
     'UUU', 'VVV', 'WWW', 'XXX', 'YYY', 'ZZZ',  # Repeated letters not real codes
+    # Obscure airports that cause false positives in email parsing
+    'PEC',  # Pelican SPB - tiny seaplane base in Alaska
+    'HIT',  # Haivaro - tiny airport in Papua New Guinea
+    'GAP',  # Gusap - tiny PNG airport
+    'TAB',  # Tabora - Tanzania
+    'WEB',  # Web - sounds like internet
+    'LOG',  # Longana - Vanuatu
+    'DOT',  # Tawi-Tawi - Philippines
+    'LET',  # Leticia - Colombia
+    'CAT',  # Cat Island - Bahamas but "CAT" appears in text
+    'POP',  # Puerto Plata - but "POP" appears in emails
+    'TOP',  # Topeka - but rarely used
+    'TAP',  # appears in emails
+    'TON',  # Tonu - PNG
+    'BAN',  # appears in text
+    'RUN',  # appears in text
 }
 
 # Friendly names for major airports (override file names for cleaner display)
@@ -88,6 +104,156 @@ _FALLBACK_CODES = {
     'ATL', 'DFW', 'DEN', 'ORD', 'LAX', 'JFK', 'LAS', 'MCO', 'MIA', 'CLT',
     'SEA', 'PHX', 'EWR', 'SFO', 'IAH', 'BOS', 'FLL', 'MSP', 'LGA', 'DTW',
 }
+
+# City name to airport code mapping
+# Maps common city names/variations to their primary airport codes
+CITY_TO_AIRPORT = {
+    # US Cities - with variations and nicknames
+    'atlanta': 'ATL', 'atl': 'ATL',
+    'dallas': 'DFW', 'dallas fort worth': 'DFW', 'dallas-fort worth': 'DFW', 'dfw': 'DFW',
+    'denver': 'DEN', 'den': 'DEN',
+    'chicago': 'ORD', "chicago o'hare": 'ORD', 'ohare': 'ORD', "o'hare": 'ORD', 'ord': 'ORD',
+    'los angeles': 'LAX', 'la': 'LAX', 'lax': 'LAX', 'l.a.': 'LAX',
+    'new york': 'JFK', 'nyc': 'JFK', 'jfk': 'JFK', 'new york city': 'JFK',
+    'las vegas': 'LAS', 'vegas': 'LAS', 'las': 'LAS',
+    'orlando': 'MCO', 'mco': 'MCO',
+    'miami': 'MIA', 'mia': 'MIA',
+    'charlotte': 'CLT', 'clt': 'CLT',
+    'seattle': 'SEA', 'sea': 'SEA',
+    'phoenix': 'PHX', 'phx': 'PHX',
+    'newark': 'EWR', 'ewr': 'EWR',
+    'san francisco': 'SFO', 'sf': 'SFO', 'sfo': 'SFO', 'san fran': 'SFO',
+    'houston': 'IAH', 'iah': 'IAH',
+    'boston': 'BOS', 'bos': 'BOS',
+    'fort lauderdale': 'FLL', 'ft lauderdale': 'FLL', 'fll': 'FLL',
+    'minneapolis': 'MSP', 'msp': 'MSP', 'minneapolis-st paul': 'MSP',
+    'laguardia': 'LGA', 'la guardia': 'LGA', 'lga': 'LGA',
+    'detroit': 'DTW', 'dtw': 'DTW',
+    'philadelphia': 'PHL', 'philly': 'PHL', 'phl': 'PHL',
+    'salt lake city': 'SLC', 'salt lake': 'SLC', 'slc': 'SLC',
+    'washington': 'DCA', 'washington dc': 'DCA', 'dc': 'DCA', 'reagan': 'DCA',
+    'san diego': 'SAN', 'san': 'SAN',
+    'baltimore': 'BWI', 'bwi': 'BWI',
+    'tampa': 'TPA', 'tpa': 'TPA',
+    'austin': 'AUS', 'aus': 'AUS',
+    'dulles': 'IAD', 'iad': 'IAD',
+    'nashville': 'BNA', 'bna': 'BNA',
+    'midway': 'MDW', 'chicago midway': 'MDW', 'mdw': 'MDW',
+    'honolulu': 'HNL', 'hnl': 'HNL', 'hawaii': 'HNL',
+    'portland': 'PDX', 'pdx': 'PDX',
+    'st louis': 'STL', 'st. louis': 'STL', 'saint louis': 'STL', 'stl': 'STL',
+    'raleigh': 'RDU', 'raleigh durham': 'RDU', 'raleigh-durham': 'RDU', 'rdu': 'RDU', 'durham': 'RDU',
+    'new orleans': 'MSY', 'msy': 'MSY', 'nola': 'MSY',
+    'san jose': 'SJC', 'sjc': 'SJC',
+    'sacramento': 'SMF', 'smf': 'SMF',
+    'kansas city': 'MCI', 'mci': 'MCI',
+    'san antonio': 'SAT',
+    'cleveland': 'CLE', 'cle': 'CLE',
+    'indianapolis': 'IND', 'indy': 'IND', 'ind': 'IND',
+    'pittsburgh': 'PIT', 'pit': 'PIT',
+    'columbus': 'CMH', 'cmh': 'CMH',
+    'cincinnati': 'CVG', 'cvg': 'CVG',
+    'hartford': 'BDL', 'bdl': 'BDL',
+    'jacksonville': 'JAX', 'jax': 'JAX',
+    'maui': 'OGG', 'ogg': 'OGG',
+    'anchorage': 'ANC', 'anc': 'ANC', 'alaska': 'ANC',
+    'buffalo': 'BUF', 'buf': 'BUF',
+    'albuquerque': 'ABQ', 'abq': 'ABQ',
+    'omaha': 'OMA', 'oma': 'OMA',
+    'burbank': 'BUR', 'bur': 'BUR',
+    'west palm beach': 'PBI', 'palm beach': 'PBI', 'pbi': 'PBI',
+    'richmond': 'RIC', 'ric': 'RIC',
+    'fort myers': 'RSW', 'ft myers': 'RSW', 'rsw': 'RSW',
+    'louisville': 'SDF', 'sdf': 'SDF',
+    'milwaukee': 'MKE', 'mke': 'MKE',
+    'tucson': 'TUS', 'tus': 'TUS',
+    'oklahoma city': 'OKC', 'okc': 'OKC',
+    'reno': 'RNO', 'rno': 'RNO',
+    'el paso': 'ELP', 'elp': 'ELP',
+    'boise': 'BOI', 'boi': 'BOI',
+    'charleston': 'CHS', 'chs': 'CHS',
+    'savannah': 'SAV', 'sav': 'SAV',
+    'providence': 'PVD', 'pvd': 'PVD',
+    'norfolk': 'ORF', 'orf': 'ORF',
+    'memphis': 'MEM', 'mem': 'MEM',
+    'birmingham': 'BHM', 'bhm': 'BHM',
+    'rochester': 'ROC', 'roc': 'ROC',
+    'syracuse': 'SYR', 'syr': 'SYR',
+    'albany': 'ALB', 'alb': 'ALB',
+    'hartford': 'BDL',
+    "martha's vineyard": 'MVY', 'marthas vineyard': 'MVY', 'the vineyard': 'MVY', 'mvy': 'MVY',
+    'nantucket': 'ACK', 'ack': 'ACK',
+    'key west': 'EYW', 'eyw': 'EYW',
+
+    # Canada
+    'toronto': 'YYZ', 'yyz': 'YYZ',
+    'vancouver': 'YVR', 'yvr': 'YVR',
+    'montreal': 'YUL', 'yul': 'YUL',
+    'calgary': 'YYC', 'yyc': 'YYC',
+    'edmonton': 'YEG', 'yeg': 'YEG',
+    'ottawa': 'YOW', 'yow': 'YOW',
+
+    # Mexico & Caribbean
+    'mexico city': 'MEX', 'mex': 'MEX',
+    'cancun': 'CUN', 'cun': 'CUN',
+    'cabo': 'SJD', 'cabo san lucas': 'SJD', 'los cabos': 'SJD', 'sjd': 'SJD',
+    'puerto vallarta': 'PVR', 'pvr': 'PVR',
+    'san juan': 'SJU', 'puerto rico': 'SJU', 'sju': 'SJU',
+    'nassau': 'NAS', 'bahamas': 'NAS', 'nas': 'NAS',
+    'montego bay': 'MBJ', 'jamaica': 'MBJ', 'mbj': 'MBJ',
+    'punta cana': 'PUJ', 'puj': 'PUJ',
+    'aruba': 'AUA', 'aua': 'AUA',
+    'st maarten': 'SXM', 'st. maarten': 'SXM', 'sint maarten': 'SXM', 'sxm': 'SXM',
+
+    # Europe
+    'london': 'LHR', 'london heathrow': 'LHR', 'heathrow': 'LHR', 'lhr': 'LHR',
+    'gatwick': 'LGW', 'london gatwick': 'LGW', 'lgw': 'LGW',
+    'paris': 'CDG', 'cdg': 'CDG',
+    'amsterdam': 'AMS', 'ams': 'AMS',
+    'frankfurt': 'FRA', 'fra': 'FRA',
+    'madrid': 'MAD', 'mad': 'MAD',
+    'barcelona': 'BCN', 'bcn': 'BCN',
+    'rome': 'FCO', 'fco': 'FCO',
+    'munich': 'MUC', 'muc': 'MUC',
+    'zurich': 'ZRH', 'zrh': 'ZRH',
+    'dublin': 'DUB', 'dub': 'DUB',
+    'lisbon': 'LIS', 'lis': 'LIS',
+    'athens': 'ATH', 'ath': 'ATH',
+    'istanbul': 'IST', 'ist': 'IST',
+    'prague': 'PRG', 'prg': 'PRG',
+
+    # Asia & Middle East
+    'tokyo': 'NRT', 'nrt': 'NRT',
+    'seoul': 'ICN', 'icn': 'ICN',
+    'beijing': 'PEK', 'pek': 'PEK',
+    'shanghai': 'PVG', 'pvg': 'PVG',
+    'hong kong': 'HKG', 'hkg': 'HKG',
+    'singapore': 'SIN', 'sin': 'SIN',
+    'bangkok': 'BKK', 'bkk': 'BKK',
+    'dubai': 'DXB', 'dxb': 'DXB',
+    'doha': 'DOH', 'doh': 'DOH', 'qatar': 'DOH',
+    'tel aviv': 'TLV', 'tlv': 'TLV', 'israel': 'TLV',
+
+    # Australia/Pacific
+    'sydney': 'SYD', 'syd': 'SYD',
+    'melbourne': 'MEL', 'mel': 'MEL',
+    'auckland': 'AKL', 'akl': 'AKL', 'new zealand': 'AKL',
+}
+
+
+def city_to_airport_code(city_name):
+    """Convert a city name to its airport code.
+
+    Args:
+        city_name: City name string (case insensitive)
+
+    Returns:
+        Airport code string or None if not found
+    """
+    if not city_name:
+        return None
+    normalized = city_name.lower().strip()
+    return CITY_TO_AIRPORT.get(normalized)
 
 
 def load_airport_codes(codes_file=None):
