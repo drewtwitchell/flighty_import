@@ -539,7 +539,8 @@ def scan_for_flights(mail, config, folder, processed):
                 continue  # Skip marketing emails
 
             # Pass HTML body for schema.org extraction (most reliable source)
-            flight_info = extract_flight_info(full_body, email_date=email_date, html_body=html_body)
+            # Also pass from_addr and subject to help with airline detection and pattern matching
+            flight_info = extract_flight_info(full_body, email_date=email_date, html_body=html_body, from_addr=from_addr, subject=subject)
 
             # If we have a flight number, verify the route online
             # This ensures we print the correct airports

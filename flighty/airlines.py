@@ -122,25 +122,40 @@ AIRLINE_HUBS = {
 
 # Mapping from airline name variations to standard name
 AIRLINE_NAME_VARIATIONS = {
+    # US Airlines (with common variations)
     'jetblue': 'JetBlue',
     'jet blue': 'JetBlue',
+    'jetblue airways': 'JetBlue',
     'delta': 'Delta',
+    'delta air': 'Delta',
     'delta air lines': 'Delta',
+    'delta airlines': 'Delta',
     'united': 'United',
     'united airlines': 'United',
     'american': 'American Airlines',
     'american airlines': 'American Airlines',
+    'aa.com': 'American Airlines',
     'southwest': 'Southwest',
     'southwest airlines': 'Southwest',
     'alaska': 'Alaska Airlines',
     'alaska airlines': 'Alaska Airlines',
+    'alaskaair': 'Alaska Airlines',
     'spirit': 'Spirit',
     'spirit airlines': 'Spirit',
     'frontier': 'Frontier',
     'frontier airlines': 'Frontier',
+    'flyfrontier': 'Frontier',
     'hawaiian': 'Hawaiian Airlines',
     'hawaiian airlines': 'Hawaiian Airlines',
+    'allegiant': 'Allegiant',
+    'allegiant air': 'Allegiant',
+    'sun country': 'Sun Country',
+    'breeze': 'Breeze Airways',
+    'breeze airways': 'Breeze Airways',
+    # Canada
     'air canada': 'Air Canada',
+    'westjet': 'WestJet',
+    # Europe
     'british airways': 'British Airways',
     'lufthansa': 'Lufthansa',
     'emirates': 'Emirates',
@@ -152,8 +167,59 @@ AIRLINE_NAME_VARIATIONS = {
     'cathay pacific': 'Cathay Pacific',
     'qantas': 'Qantas',
     'virgin atlantic': 'Virgin Atlantic',
+    'virgin america': 'Virgin Atlantic',
     'air france': 'Air France',
     'klm': 'KLM',
+    'iberia': 'Iberia',
+    'aer lingus': 'Aer Lingus',
+    'icelandair': 'Icelandair',
+    'norwegian': 'Norwegian',
+    'ryanair': 'Ryanair',
+    'easyjet': 'easyJet',
+    'vueling': 'Vueling',
+    'swiss': 'Swiss',
+    'austrian': 'Austrian',
+    'finnair': 'Finnair',
+    'sas': 'SAS',
+    'tap portugal': 'TAP Portugal',
+    'tap air': 'TAP Portugal',
+    # Middle East
+    'etihad': 'Etihad',
+    'turkish': 'Turkish Airlines',
+    'turkish airlines': 'Turkish Airlines',
+    'saudia': 'Saudia',
+    'saudi arabian': 'Saudia',
+    # Asia
+    'japan airlines': 'Japan Airlines',
+    'jal': 'Japan Airlines',
+    'ana': 'ANA',
+    'all nippon': 'ANA',
+    'korean air': 'Korean Air',
+    'asiana': 'Asiana',
+    'thai airways': 'Thai Airways',
+    'malaysia airlines': 'Malaysia Airlines',
+    'garuda': 'Garuda',
+    'air india': 'Air India',
+    'vietnam airlines': 'Vietnam Airlines',
+    'china airlines': 'China Airlines',
+    'eva air': 'EVA Air',
+    'air china': 'Air China',
+    'china eastern': 'China Eastern',
+    'china southern': 'China Southern',
+    'philippine airlines': 'Philippine Airlines',
+    'airasia': 'AirAsia',
+    # Australia/Pacific
+    'virgin australia': 'Virgin Australia',
+    'air new zealand': 'Air New Zealand',
+    'fiji airways': 'Fiji Airways',
+    # Latin America
+    'aeromexico': 'Aeromexico',
+    'avianca': 'Avianca',
+    'latam': 'LATAM',
+    'copa': 'Copa',
+    'azul': 'Azul',
+    'gol': 'GOL',
+    'volaris': 'Volaris',
 }
 
 # Airline and booking site patterns to detect flight confirmation emails
@@ -345,8 +411,8 @@ def extract_flight_numbers(text):
     flight_numbers = []
     seen = set()
 
-    # Pattern 1: Standard format "AA 123" or "AA123"
-    pattern1 = re.compile(r'\b([A-Z]{2})\s*(\d{1,4})\b')
+    # Pattern 1: Standard format "AA 123" or "AA123" or "AA-123"
+    pattern1 = re.compile(r'\b([A-Z]{2})[\s\-]*(\d{1,4})\b')
     for match in pattern1.finditer(text):
         code = match.group(1).upper()
         num = match.group(2)
@@ -355,8 +421,8 @@ def extract_flight_numbers(text):
             seen.add(key)
             flight_numbers.append((code, num, AIRLINE_CODES[code]))
 
-    # Pattern 2: "Flight 123" with airline context nearby
-    pattern2 = re.compile(r'[Ff]light\s*#?\s*(\d{1,4})\b')
+    # Pattern 2: "Flight 123" or "Flt 123" with airline context nearby
+    pattern2 = re.compile(r'(?:flight|flt)[\s#:]*(\d{1,4})\b', re.IGNORECASE)
     for match in pattern2.finditer(text):
         num = match.group(1)
         # Look for airline name near this flight number
@@ -375,6 +441,23 @@ def extract_flight_numbers(text):
                             flight_numbers.append((code, num, airline_name))
                         break
                 break
+
+    # Pattern 3: "JetBlue 1234" or "Delta 567" (airline name followed by number)
+    for variation, airline_name in AIRLINE_NAME_VARIATIONS.items():
+        # Must be at least 4 chars to avoid false positives
+        if len(variation) < 4:
+            continue
+        pattern = re.compile(rf'\b{re.escape(variation)}[\s#]*(\d{{1,4}})\b', re.IGNORECASE)
+        for match in pattern.finditer(text):
+            num = match.group(1)
+            # Find the airline code
+            for code, name in AIRLINE_CODES.items():
+                if name == airline_name:
+                    key = f"{code}{num}"
+                    if key not in seen:
+                        seen.add(key)
+                        flight_numbers.append((code, num, airline_name))
+                    break
 
     return flight_numbers
 

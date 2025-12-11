@@ -990,7 +990,7 @@ def _verify_airport_in_context(code, airport_name, text):
     return False
 
 
-def extract_airports_from_text(text, from_addr=None, verify_online=False):
+def extract_airports_from_text(text, from_addr=None, verify_online=False, is_confirmed_flight_email=False):
     """Extract and validate airport codes from text.
 
     SMART extraction with airline cross-validation:
@@ -1002,12 +1002,15 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False):
     6. City name recognition (Boston to Las Vegas)
 
     Strong flight evidence = airline detected + (flight number OR confirmation pattern)
+    OR is_confirmed_flight_email=True (email already passed flight detection)
     With strong evidence, we trust airport codes even without city name verification.
 
     Args:
         text: Email text to search
         from_addr: Optional sender address for airline detection
         verify_online: If True, verify flights via FlightAware (slower but more accurate)
+        is_confirmed_flight_email: If True, we already know this is a flight confirmation email
+                                   (passed is_flight_email check), so be more aggressive
 
     Returns:
         List of tuples: [(code, name, confidence), ...]
@@ -1034,7 +1037,8 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False):
     has_airline = airline is not None
 
     # Strong evidence: airline + (flight number OR confirmation)
-    strong_flight_evidence = has_airline and (has_flight_number or has_confirmation_pattern)
+    # OR we already know this is a confirmed flight email (passed is_flight_email check)
+    strong_flight_evidence = is_confirmed_flight_email or (has_airline and (has_flight_number or has_confirmation_pattern))
 
     # Strategy 0: If we have a flight number and online verification is enabled,
     # try to get the actual route from FlightAware
@@ -1377,7 +1381,7 @@ def extract_dates_from_text(text, email_date=None):
 # MAIN EXTRACTION FUNCTION
 # ============================================================================
 
-def extract_flight_info(body, email_date=None, html_body=None):
+def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, subject=None):
     """Extract all flight information from an email.
 
     Uses a tiered approach:
@@ -1389,6 +1393,8 @@ def extract_flight_info(body, email_date=None, html_body=None):
         body: Email body text
         email_date: datetime when email was sent
         html_body: Raw HTML body (for schema.org extraction)
+        from_addr: Sender email address (helps with airline detection)
+        subject: Email subject line
 
     Returns:
         Dict with: airports, flight_numbers, dates, times, route
@@ -1425,30 +1431,28 @@ def extract_flight_info(body, email_date=None, html_body=None):
     # Strip HTML for text parsing
     text = strip_html_tags(body)
 
-    # Extract airports
+    # Include subject in text for pattern matching
+    if subject:
+        text = subject + " " + text
+
+    # Extract airports - pass from_addr to help with airline detection
+    # Set is_confirmed_flight_email=True since we know this is a flight email
     if not info["airports"]:
-        airport_results = extract_airports_from_text(text)
+        airport_results = extract_airports_from_text(text, from_addr=from_addr, is_confirmed_flight_email=True)
         info["airports"] = [code for code, name, conf in airport_results][:4]
 
         # Set route if we have exactly 2 airports
         if len(info["airports"]) >= 2 and not info["route"]:
             info["route"] = (info["airports"][0], info["airports"][1])
 
-    # Extract flight numbers
+    # Extract flight numbers using the comprehensive function from airlines.py
     if not info["flight_numbers"]:
-        flight_patterns = [
-            re.compile(r'[Ff]light\s*#?\s*:?\s*([A-Z]{0,2}\s*\d{1,4})\b'),
-            re.compile(r'\b(B6|DL|UA|AA|WN|AS|NK|F9|HA|AC|BA|LH|EK)\s*(\d{1,4})\b'),
-        ]
-        for pattern in flight_patterns:
-            matches = pattern.findall(text)
-            for match in matches:
-                if isinstance(match, tuple):
-                    num = ''.join(match).strip()
-                else:
-                    num = match.strip()
-                if num and num not in info["flight_numbers"]:
-                    info["flight_numbers"].append(num)
+        flight_nums = extract_flight_numbers(text)
+        # Format as "AA123" strings
+        for airline_code, flight_num, airline_name in flight_nums:
+            formatted = f"{airline_code}{flight_num}"
+            if formatted not in info["flight_numbers"]:
+                info["flight_numbers"].append(formatted)
         info["flight_numbers"] = info["flight_numbers"][:4]
 
     # Extract dates
