@@ -1000,7 +1000,17 @@ def select_latest_flights(all_flights, processed):
 
     for conf_code, emails in all_flights.items():
         # Sort by email date, newest first
-        emails.sort(key=lambda x: x["email_date"], reverse=True)
+        # Handle mix of timezone-aware and naive datetimes by converting to naive
+        def get_sort_date(x):
+            dt = x.get("email_date")
+            if dt is None:
+                return datetime.min
+            # Convert to naive datetime for comparison
+            if hasattr(dt, 'tzinfo') and dt.tzinfo is not None:
+                return dt.replace(tzinfo=None)
+            return dt
+
+        emails.sort(key=get_sort_date, reverse=True)
         latest = emails[0]
 
         # STEP 1: Identify trusted emails (confirmation code in subject)
