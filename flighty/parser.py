@@ -13,6 +13,7 @@ All airport codes are validated against our 9,800+ IATA database.
 import re
 import hashlib
 import json
+import logging
 from datetime import datetime
 from html.parser import HTMLParser
 from html import unescape
@@ -21,6 +22,9 @@ from .airports import VALID_AIRPORT_CODES, EXCLUDED_CODES, AIRPORT_NAMES, ALL_AI
 from .airlines import extract_airline_from_text, extract_flight_numbers, validate_airport_for_airline, AIRLINE_HUBS
 import urllib.request
 import urllib.error
+
+# Set up logging
+logger = logging.getLogger(__name__)
 
 # Try to import dateutil
 try:
@@ -1018,13 +1022,18 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
     airports = []
     seen = set()
 
+    logger.debug(f"    extract_airports_from_text: from_addr='{from_addr}', is_confirmed={is_confirmed_flight_email}")
+    logger.debug(f"    Text preview (first 200 chars): {text[:200] if text else 'EMPTY'}...")
+
     # First, identify the airline - this helps validate airport codes
     airline = extract_airline_from_text(text, from_addr)
     flight_numbers = extract_flight_numbers(text)
+    logger.debug(f"    Detected airline: {airline}, flight_numbers: {flight_numbers}")
 
     # If we found flight numbers, use the airline from those
     if flight_numbers and not airline:
         airline = flight_numbers[0][2]  # airline name from first flight number
+        logger.debug(f"    Using airline from flight number: {airline}")
 
     # Determine if we have strong flight evidence
     # Strong evidence means we're confident this is a real flight email
@@ -1035,10 +1044,12 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
     ))
     has_flight_number = len(flight_numbers) > 0
     has_airline = airline is not None
+    logger.debug(f"    Evidence: airline={has_airline}, flight_num={has_flight_number}, confirmation={has_confirmation_pattern}")
 
     # Strong evidence: airline + (flight number OR confirmation)
     # OR we already know this is a confirmed flight email (passed is_flight_email check)
     strong_flight_evidence = is_confirmed_flight_email or (has_airline and (has_flight_number or has_confirmation_pattern))
+    logger.debug(f"    Strong flight evidence: {strong_flight_evidence}")
 
     # Strategy 0: If we have a flight number and online verification is enabled,
     # try to get the actual route from FlightAware
@@ -1064,12 +1075,15 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
     # Strategy 1: "City Name (ABC)" format - highest confidence
     # This is explicit: "Los Angeles (LAX)" - always trust these
     city_code_pattern = re.compile(r'([A-Za-z][A-Za-z\s]{2,30})\s*\(([A-Z]{3})\)')
-    for city, code in city_code_pattern.findall(text):
+    city_matches = city_code_pattern.findall(text)
+    logger.debug(f"    Strategy 1 (City Name (ABC)): found {len(city_matches)} matches: {city_matches[:5]}")
+    for city, code in city_matches:
         code = code.upper()
         is_valid, name = validate_airport_code(code)
         if is_valid and code not in seen:
             seen.add(code)
             airports.append((code, name, 'high'))
+            logger.debug(f"      -> Added {code} from 'City (CODE)' pattern")
 
     # Strategy 2: Route patterns "ABC → DEF" or "ABC to DEF"
     # Clear route format - high confidence
@@ -1077,21 +1091,27 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
         re.compile(r'\b([A-Z]{3})\s*(?:→|->|►|–|—)\s*([A-Z]{3})\b'),
         re.compile(r'\b([A-Z]{3})\s+to\s+([A-Z]{3})\b', re.IGNORECASE),
     ]
-    for pattern in route_patterns:
-        for origin, dest in pattern.findall(text):
+    for i, pattern in enumerate(route_patterns):
+        matches = pattern.findall(text)
+        if matches:
+            logger.debug(f"    Strategy 2 (Route pattern {i+1}): found {matches}")
+        for origin, dest in matches:
             for code in [origin.upper(), dest.upper()]:
                 is_valid, name = validate_airport_code(code)
                 if is_valid and code not in seen:
                     seen.add(code)
                     airports.append((code, name, 'high'))
+                    logger.debug(f"      -> Added {code} from route pattern")
 
     # Strategy 3: If we know the airline, look for their hub airports
     # This is strong evidence - if Delta email mentions ATL, it's almost certainly correct
     if airline and len(airports) < 2:
         airline_hubs = AIRLINE_HUBS.get(airline, set())
+        logger.debug(f"    Strategy 3 (Airline hubs): airline={airline}, hubs={airline_hubs}")
         if airline_hubs:
             # Find 3-letter codes that match airline hubs
             all_codes = re.findall(r'\b([A-Z]{3})\b', text)
+            logger.debug(f"      All 3-letter codes in text: {list(set(all_codes))[:20]}")
             for code in all_codes:
                 code = code.upper()
                 if code in seen:
@@ -1101,6 +1121,7 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
                     if is_valid:
                         seen.add(code)
                         airports.append((code, name, 'airline_hub'))
+                        logger.debug(f"      -> Added {code} as airline hub")
 
     # Strategy 4: Contextual patterns
     # Accept if: strong flight evidence OR city name verified OR airline hub
@@ -1108,7 +1129,9 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
         r'(?:depart(?:ure|ing|s)?|arriv(?:al|ing|es)?|from|to|origin|destination|airport)[:\s]+([A-Z]{3})\b',
         re.IGNORECASE
     )
-    for match in context_pattern.finditer(text):
+    context_matches = list(context_pattern.finditer(text))
+    logger.debug(f"    Strategy 4 (Context patterns): found {len(context_matches)} matches")
+    for match in context_matches:
         code = match.group(1).upper()
         if code in seen:
             continue
@@ -1117,6 +1140,7 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
             # Accept if: strong flight evidence OR city name in text OR airline hub
             city_verified = _verify_airport_in_context(code, name, text)
             airline_verified = validate_airport_for_airline(code, airline) in ('hub', 'served')
+            logger.debug(f"      Code {code}: valid={is_valid}, city_verified={city_verified}, airline_verified={airline_verified}, strong_evidence={strong_flight_evidence}")
 
             if strong_flight_evidence or city_verified or airline_verified:
                 seen.add(code)
@@ -1127,9 +1151,13 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
                 else:
                     confidence = 'verified'
                 airports.append((code, name, confidence))
+                logger.debug(f"      -> Added {code} with confidence '{confidence}'")
+            else:
+                logger.debug(f"      -> Rejected {code} - no verification passed")
 
     # Strategy 5: Look for 3-letter codes near flight keywords
     # Accept if: strong flight evidence OR city verified OR airline hub
+    logger.debug(f"    Strategy 5 (Near keywords): airports so far = {len(airports)}")
     if len(airports) < 2:
         flight_keywords = [
             'flight', 'airport', 'terminal', 'gate', 'boarding',
@@ -1138,6 +1166,8 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
 
         # Find all 3-letter uppercase sequences
         all_codes = re.findall(r'\b([A-Z]{3})\b', text)
+        valid_codes = [c for c in set(all_codes) if validate_airport_code(c)[0]]
+        logger.debug(f"      Valid 3-letter codes in text: {valid_codes[:15]}")
 
         for code in all_codes:
             code = code.upper()
@@ -1169,14 +1199,17 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
             if strong_flight_evidence or city_verified or airline_verified:
                 seen.add(code)
                 airports.append((code, name, 'keyword_context'))
+                logger.debug(f"      -> Added {code} near keywords")
                 if len(airports) >= 2:
                     break
 
     # Strategy 6: City name recognition (e.g., "Boston to Las Vegas")
     # This is reliable because we're matching actual city names
+    logger.debug(f"    Strategy 6 (City names): airports so far = {len(airports)}")
     if len(airports) < 2:
         airports = _extract_airports_from_city_names(text, airports, seen)
 
+    logger.debug(f"    Final airports: {airports}")
     return airports
 
 
@@ -1407,12 +1440,16 @@ def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, s
         "route": None
     }
 
+    logger.debug(f"extract_flight_info called: subject='{subject[:50] if subject else None}...', from='{from_addr}'")
+
     if not body:
+        logger.debug("  -> No body, returning empty info")
         return info
 
     # Try schema.org first (most reliable)
     schema_info = extract_schema_org_flights(html_body or body)
     if schema_info:
+        logger.debug(f"  -> Schema.org found: {schema_info}")
         if schema_info.get("airports"):
             info["airports"] = schema_info["airports"]
         if schema_info.get("route"):
@@ -1426,19 +1463,27 @@ def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, s
 
         # If we got good data, return early
         if info["airports"] and info["dates"]:
+            logger.debug(f"  -> Using schema.org data, returning: {info}")
             return info
+    else:
+        logger.debug("  -> No schema.org data found")
 
     # Strip HTML for text parsing
     text = strip_html_tags(body)
+    text_len = len(text)
+    logger.debug(f"  -> Stripped text length: {text_len} chars")
 
     # Include subject in text for pattern matching
     if subject:
         text = subject + " " + text
+        logger.debug(f"  -> Added subject to text")
 
     # Extract airports - pass from_addr to help with airline detection
     # Set is_confirmed_flight_email=True since we know this is a flight email
     if not info["airports"]:
+        logger.debug(f"  -> Calling extract_airports_from_text...")
         airport_results = extract_airports_from_text(text, from_addr=from_addr, is_confirmed_flight_email=True)
+        logger.debug(f"  -> Airport results: {airport_results}")
         info["airports"] = [code for code, name, conf in airport_results][:4]
 
         # Set route if we have exactly 2 airports
@@ -1448,6 +1493,7 @@ def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, s
     # Extract flight numbers using the comprehensive function from airlines.py
     if not info["flight_numbers"]:
         flight_nums = extract_flight_numbers(text)
+        logger.debug(f"  -> Flight numbers found: {flight_nums}")
         # Format as "AA123" strings
         for airline_code, flight_num, airline_name in flight_nums:
             formatted = f"{airline_code}{flight_num}"
@@ -1458,6 +1504,7 @@ def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, s
     # Extract dates
     if not info["dates"]:
         info["dates"] = extract_dates_from_text(text, email_date)
+        logger.debug(f"  -> Dates found: {info['dates']}")
 
     # Extract times
     if not info["times"]:
@@ -1465,6 +1512,7 @@ def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, s
         times = time_pattern.findall(text)
         info["times"] = list(dict.fromkeys(times))[:4]
 
+    logger.debug(f"  -> Final info: airports={info['airports']}, route={info['route']}, flights={info['flight_numbers']}, dates={info['dates']}")
     return info
 
 

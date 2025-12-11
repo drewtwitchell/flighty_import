@@ -9,10 +9,12 @@ Usage:
     python3 run.py --dry-run    # Test without forwarding
     python3 run.py --setup      # Run setup wizard
     python3 run.py --days N     # Search N days back
+    python3 run.py --debug      # Enable debug logging
     python3 run.py --help       # Show help
 """
 
 import sys
+import logging
 import urllib.request
 import urllib.error
 from pathlib import Path
@@ -596,6 +598,7 @@ Usage:
     python3 run.py              Run and forward flight emails
     python3 run.py --dry-run    Test without forwarding
     python3 run.py --days N     Search N days back (e.g., --days 180)
+    python3 run.py --debug      Enable debug logging (shows extraction details)
     python3 run.py --setup      Run setup wizard
     python3 run.py --reset      Clear processed flights history
     python3 run.py --clean      Clean up corrupt/temp files and start fresh
@@ -604,6 +607,7 @@ Usage:
 Examples:
     python3 run.py --days 365           Search 1 year of emails
     python3 run.py --days 180 --dry-run Test 6 months without sending
+    python3 run.py --debug --dry-run    Debug extraction without sending
 
 First time? Run: python3 run.py --setup
 
@@ -614,6 +618,14 @@ Had issues or crashes? Run: python3 run.py --clean
 def main():
     """Entry point."""
     args = sys.argv[1:]
+
+    # Set up debug logging if requested
+    if "--debug" in args:
+        logging.basicConfig(
+            level=logging.DEBUG,
+            format='%(name)s: %(message)s'
+        )
+        print("Debug logging enabled\n")
 
     if "--setup" in args or "-s" in args:
         run_setup()

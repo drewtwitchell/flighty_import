@@ -271,6 +271,7 @@ crontab -e
 
 ## Version History
 
+- **v2.16.0** - Added --debug flag for detailed extraction logging to diagnose parsing issues
 - **v2.15.0** - Improved airport/route extraction: pass subject+from to parser, more airline patterns
 - **v2.14.0** - Major fix: reject English words as confirmation codes (SEARCH, HOTELS, etc.)
 - **v2.13.0** - FlightAware route verification; smart airport acceptance with strong flight evidence
