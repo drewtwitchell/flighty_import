@@ -279,44 +279,143 @@ _SUBJECT_CONF_PATTERN = re.compile(r'[–\-]\s*([A-Z0-9]{6})\s*$')
 _SUBJECT_CONF_PATTERN2 = re.compile(r'#\s*([A-Z0-9]{6})\b')
 
 # Common English words that are NOT confirmation codes
+# This is a comprehensive list to prevent false positives
 _EXCLUDED_CONFIRMATION_CODES = {
-    # Common 6-letter words
-    'WINDOW', 'BEFORE', 'CHANGE', 'FLIGHT', 'NUMBER', 'PLEASE', 'THANKS',
-    'TRAVEL', 'RETURN', 'ARRIVE', 'DEPART', 'BOSTON', 'DALLAS', 'DENVER',
-    'OTHERS', 'REVIEW', 'UPDATE', 'MANAGE', 'CANCEL', 'MODIFY', 'CREDIT',
-    'POINTS', 'MEMBER', 'STATUS', 'SELECT', 'CHOOSE', 'OPTION', 'DOUBLE',
-    'SINGLE', 'UNITED', 'VIRGIN', 'SPIRIT', 'AMOUNT', 'DOLLAR', 'CHARGE',
-    'REFUND', 'POLICY', 'NOTICE', 'DETAIL', 'TICKET',
-    'EITHER', 'STREET', 'WITHIN', 'DURING', 'ACROSS', 'AROUND', 'BEHIND',
-    'BEYOND', 'TOWARD', 'SHOULD', 'THOUGH', 'REALLY', 'ALWAYS', 'ALMOST',
-    'PEOPLE', 'THINGS', 'HAPPEN', 'COMING', 'MAKING', 'TAKING', 'HAVING',
-    'FAMILY', 'FRIEND', 'SUMMER', 'WINTER', 'SPRING', 'MONDAY', 'FRIDAY',
-    'IMAGES', 'CHROME', 'SAFARI', 'MOBILE', 'ONLINE', 'ACCESS', 'SECURE',
-    'SUBMIT', 'BUTTON', 'FOOTER', 'HEADER', 'DOMAIN', 'SERVER',
-    # Common 5-letter words
-    'DELTA', 'AFTER', 'WHICH', 'THEIR', 'ABOUT', 'WOULD', 'THERE', 'COULD',
-    'OTHER', 'THESE', 'FIRST', 'BEING', 'WHERE', 'SINCE', 'UNDER', 'PRICE',
-    # Common 7-letter words
-    'AIRPORT', 'BOOKING', 'ACCOUNT', 'SERVICE', 'CONTACT', 'RECEIPT',
-    # Common 8-letter words
-    'AMERICAN', 'AIRLINES', 'TERMINAL', 'CUSTOMER', 'BOARDING',
+    # Words found in user's output that were incorrectly identified as codes
+    'SEARCH', 'CLICKS', 'JETBLUE', 'CENTER', 'DETAILS', 'CHANNELS', 'BOOKED',
+    'CLOSER', 'EXCESS', 'RENTAL', 'REDEEM', 'HILTON', 'MARTHA', 'REWARD',
+    'TERMS', 'HEIGHT', 'BORDER', 'EXPECT', 'HOTELS', 'BUNDLE', 'LIGHTS',
+    'PREFER', 'NUMBER', 'DOESN',
+    # Airline and travel related words
+    'JETBLUE', 'DELTA', 'UNITED', 'SPIRIT', 'VIRGIN', 'ALASKA', 'FRONTIER',
+    'SOUTHWEST', 'AMERICAN', 'AIRLINES', 'AIRWAYS', 'FLIGHT', 'FLIGHTS',
+    'AIRPORT', 'BOOKING', 'BOOKED', 'TRAVEL', 'TRAVELS', 'TICKET', 'TICKETS',
+    'BOARDING', 'TERMINAL', 'DEPARTURE', 'ARRIVAL', 'DEPART', 'ARRIVE',
+    'RETURN', 'ROUNDTRIP', 'ONEWAY',
+    # Hotel/rental words
+    'HILTON', 'MARRIOTT', 'HYATT', 'HOTELS', 'HOTEL', 'RENTAL', 'RENTALS',
+    'HERTZ', 'AVIS', 'BUDGET', 'ENTERPRISE',
+    # Common action words
+    'SEARCH', 'CLICK', 'CLICKS', 'SELECT', 'CHOOSE', 'SUBMIT', 'CANCEL',
+    'MODIFY', 'CHANGE', 'UPDATE', 'MANAGE', 'REVIEW', 'CONFIRM', 'REDEEM',
+    'PREFER', 'PREFER', 'EXPECT', 'BUNDLE', 'CLOSER', 'EXCESS',
+    # Common nouns
+    'CENTER', 'CENTRE', 'DETAILS', 'DETAIL', 'CHANNELS', 'CHANNEL',
+    'REWARD', 'REWARDS', 'POINTS', 'MILES', 'CREDIT', 'CREDITS',
+    'MEMBER', 'MEMBERS', 'STATUS', 'ACCOUNT', 'PROFILE',
+    'BORDER', 'BORDERS', 'HEIGHT', 'WEIGHT', 'LENGTH', 'WIDTH',
+    'LIGHTS', 'TERMS', 'POLICY', 'POLICIES', 'NOTICE', 'RECEIPT',
+    'SERVICE', 'SERVICES', 'CONTACT', 'CUSTOMER', 'SUPPORT',
+    'AMOUNT', 'DOLLAR', 'DOLLARS', 'CHARGE', 'CHARGES', 'REFUND',
+    'WINDOW', 'BUTTON', 'FOOTER', 'HEADER', 'IMAGES', 'DOMAIN', 'SERVER',
+    # Common descriptive words
+    'BEFORE', 'AFTER', 'DURING', 'WITHIN', 'ACROSS', 'AROUND', 'BEHIND',
+    'BEYOND', 'TOWARD', 'DOUBLE', 'SINGLE', 'PLEASE', 'THANKS', 'REALLY',
+    'ALWAYS', 'ALMOST', 'SHOULD', 'THOUGH', 'EITHER', 'OTHERS',
+    # People/places
+    'BOSTON', 'DALLAS', 'DENVER', 'MARTHA', 'FAMILY', 'FRIEND', 'PEOPLE',
+    # Time words
+    'SUMMER', 'WINTER', 'SPRING', 'MONDAY', 'TUESDAY', 'WEDNESDAY',
+    'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY',
+    # Tech words
+    'CHROME', 'SAFARI', 'MOBILE', 'ONLINE', 'ACCESS', 'SECURE',
+    # Common 5-letter words that appear frequently
+    'WHICH', 'THEIR', 'ABOUT', 'WOULD', 'THERE', 'COULD', 'OTHER', 'THESE',
+    'FIRST', 'BEING', 'WHERE', 'SINCE', 'UNDER', 'PRICE', 'BELOW', 'ABOVE',
+    'TODAY', 'LATER', 'EARLY', 'OFFER', 'DEALS', 'EXTRA', 'BONUS', 'MILES',
+    'SEATS', 'CLASS', 'CABIN',
+    # More action/state words
+    'COMING', 'MAKING', 'TAKING', 'HAVING', 'HAPPEN', 'THINGS', 'STREET',
+    # Email/marketing words that appear as false positives
+    'UNSUBSCRIBE', 'PRIVACY', 'SETTINGS', 'OPTIONS', 'FORWARD',
 }
 
 
+def _looks_like_english_word(code):
+    """Check if a code looks like it could be an English word.
+
+    Uses simple heuristics to detect word-like patterns.
+    Real confirmation codes are random; English words have patterns.
+    """
+    code = code.upper()
+
+    # Common English word endings
+    word_endings = ('ING', 'TED', 'LES', 'ERS', 'LLY', 'ARD', 'GHT', 'NCE', 'ION',
+                    'EST', 'ANT', 'ENT', 'ALS', 'OWN', 'AIN', 'OWS', 'ELS', 'EED',
+                    'EEN', 'OSE', 'ASE', 'USE', 'ICE', 'AGE', 'ATE', 'ILE', 'ARS',
+                    'ALS', 'UND', 'ELT', 'OST', 'AST', 'ETS', 'ITS', 'OTS', 'ATS')
+
+    # Common English word beginnings
+    word_beginnings = ('THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL',
+                       'CAN', 'HER', 'WAS', 'ONE', 'OUR', 'OUT', 'PRE', 'PRO',
+                       'CON', 'DIS', 'MIS', 'UNS', 'RES', 'EXP', 'IMP', 'COM',
+                       'SUB', 'SEA', 'CHA', 'BOR', 'CEN', 'DET', 'HEI', 'HOT',
+                       'LIG', 'REW', 'TER', 'CLO', 'EXC', 'BUN', 'PRE', 'REF')
+
+    # Check endings
+    for ending in word_endings:
+        if code.endswith(ending):
+            return True
+
+    # Check beginnings
+    for beginning in word_beginnings:
+        if code.startswith(beginning):
+            return True
+
+    # Check for common consonant-vowel patterns typical of English
+    # Words like "HOTELS" = H-O-T-E-L-S (C-V-C-V-C-C pattern)
+    # Random codes like "XKJFQZ" don't follow this pattern
+    pattern = ''
+    for c in code:
+        if c in 'AEIOU':
+            pattern += 'V'
+        else:
+            pattern += 'C'
+
+    # English words often have alternating or near-alternating C-V patterns
+    # Check for CVCVCV, CVCCVC, CCVCVC, etc.
+    english_patterns = {'CVCCVC', 'CVCVCV', 'CVCCCC', 'CVCVCC', 'CCVCVC',
+                        'CVCCVV', 'CVCVVC', 'CVVCVC', 'CCVCCV', 'CVVCCV'}
+    if pattern in english_patterns:
+        return True
+
+    return False
+
+
 def _is_valid_confirmation_code(code):
-    """Check if a code looks like a valid confirmation code."""
+    """Check if a code looks like a valid confirmation code.
+
+    Real confirmation codes are typically:
+    - 6 characters (most common)
+    - Mix of letters and sometimes numbers
+    - Not common English words
+    - Usually uppercase letters with maybe 1-2 digits
+    """
     if not code or len(code) < 5 or len(code) > 8:
         return False
 
     code = code.upper()
 
-    # Check against excluded words
+    # Check against excluded words (comprehensive list)
     if code in _EXCLUDED_CONFIRMATION_CODES:
         return False
 
     # All digits is rarely a confirmation code (more likely a date, amount, etc.)
     if code.isdigit():
         return False
+
+    # All letters that form a pronounceable English word pattern is suspicious
+    # Real codes like "ABCDEF" are random, not words like "SEARCH" or "HOTELS"
+    if code.isalpha():
+        # Check if it looks like a word (has vowels in reasonable positions)
+        vowels = sum(1 for c in code if c in 'AEIOU')
+        # English words typically have 1-2 vowels per 6 letters
+        # Random codes have more random distribution
+        if len(code) == 6 and 1 <= vowels <= 3:
+            # Looks like it could be a word - additional checks
+            # Check for common word patterns
+            if _looks_like_english_word(code):
+                return False
 
     # All same character is not valid
     if len(set(code)) == 1:
@@ -391,34 +490,49 @@ def extract_confirmation_code(subject, body):
             if _is_valid_confirmation_code(code):
                 return code
 
-    # Strategy 4: Look for 6-char codes near key words (medium confidence)
-    # Find all potential codes and score them by proximity to keywords
-    keywords = ['confirmation', 'booking', 'reference', 'locator', 'pnr', 'reservation', 'itinerary']
-    body_lower = body.lower()
+    # Strategy 4: STRICT - Only accept codes that appear IMMEDIATELY after a label
+    # This prevents picking up random 6-letter words in the email body
+    # Pattern: "Confirmation: ABCDEF" or "Code: ABCDEF" (within 20 chars, not 100)
+    strict_label_patterns = [
+        re.compile(r'confirmation[:\s#]+([A-Z0-9]{6})\b', re.IGNORECASE),
+        re.compile(r'booking\s*(?:code|ref|#)?[:\s]+([A-Z0-9]{6})\b', re.IGNORECASE),
+        re.compile(r'reference[:\s#]+([A-Z0-9]{6})\b', re.IGNORECASE),
+        re.compile(r'code[:\s]+([A-Z0-9]{6})\b', re.IGNORECASE),
+        re.compile(r'locator[:\s]+([A-Z0-9]{6})\b', re.IGNORECASE),
+        re.compile(r'pnr[:\s]+([A-Z0-9]{6})\b', re.IGNORECASE),
+    ]
 
-    # Find all 6-char alphanumeric sequences
-    potential_codes = re.findall(r'\b([A-Z0-9]{6})\b', body.upper())
-
-    for code in potential_codes:
-        if not _is_valid_confirmation_code(code):
-            continue
-
-        # Check if any keyword appears near this code (within 100 chars)
-        code_lower = code.lower()
-        for pos in [m.start() for m in re.finditer(re.escape(code_lower), body_lower)]:
-            context_start = max(0, pos - 100)
-            context_end = min(len(body_lower), pos + 100)
-            context = body_lower[context_start:context_end]
-
-            if any(kw in context for kw in keywords):
-                return code
-
-    # Strategy 5: Subject line generic 6-char code (lower confidence)
-    if subject:
-        codes = re.findall(r'\b([A-Z0-9]{6})\b', subject.upper())
-        for code in codes:
+    for pattern in strict_label_patterns:
+        match = pattern.search(body)
+        if match:
+            code = match.group(1).upper()
             if _is_valid_confirmation_code(code):
                 return code
+
+    # Strategy 5: Subject line with confirmation context
+    # Only accept if subject contains confirmation-related keywords
+    if subject:
+        subject_lower = subject.lower()
+        has_conf_context = any(kw in subject_lower for kw in
+            ['confirmation', 'confirmed', 'booking', 'itinerary', 'e-ticket', 'eticket', 'receipt'])
+
+        if has_conf_context:
+            # Look for 6-char codes in subject
+            codes = re.findall(r'\b([A-Z0-9]{6})\b', subject.upper())
+            for code in codes:
+                # Extra strict for subject line codes - must have a digit
+                # Real codes often have 1-2 digits mixed with letters
+                has_digit = any(c.isdigit() for c in code)
+                has_letter = any(c.isalpha() for c in code)
+
+                if has_digit and has_letter and _is_valid_confirmation_code(code):
+                    return code
+
+                # If all letters, must pass very strict validation
+                if code.isalpha() and _is_valid_confirmation_code(code):
+                    # Additional check: code should not be pronounceable
+                    if not _looks_like_english_word(code):
+                        return code
 
     return None
 

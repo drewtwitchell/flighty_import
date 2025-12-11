@@ -271,6 +271,7 @@ crontab -e
 
 ## Version History
 
+- **v2.14.0** - Major fix: reject English words as confirmation codes (SEARCH, HOTELS, etc.)
 - **v2.13.0** - FlightAware route verification; smart airport acceptance with strong flight evidence
 - **v2.12.1** - Fix false positive city name matches (San/SAN)
 - **v2.12.0** - Airline-aware airport validation (uses airline hubs, flight numbers)
