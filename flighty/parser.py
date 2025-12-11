@@ -1180,6 +1180,13 @@ def _code_appears_as_regular_word(code, text):
         rf'\b(?:lower|low|high|fixed|variable|annual|current|your)[-\s]{code_lower}\b',
         rf'\b{code_lower}[-\s](?:rate|loan|offer|credit|card|interest|financing)\b',
         rf'\b\d+(?:\.\d+)?%?\s*{code_lower}\b',  # "0% APR", "5.99% APR"
+        # Technology/email terms
+        rf'@{code_lower}\.com',  # @aol.com -> AOL is not an airport
+        rf'{code_lower}\.com',   # aol.com
+        rf'\.{code_lower}\b',    # .pdf, .com file extensions
+        rf'\b{code_lower}\s+(?:file|document|attachment|format)\b',  # PDF file
+        rf'\b(?:open|view|download|attach)\s+{code_lower}\b',  # open PDF
+        rf'\b{code_lower}\s+(?:portugal|air)\b',  # TAP Portugal airline name
     ]
 
     for ctx_pattern in regular_word_contexts:

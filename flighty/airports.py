@@ -10,13 +10,29 @@ from pathlib import Path
 _DATA_DIR = Path(__file__).parent.parent
 AIRPORT_CODES_FILE = _DATA_DIR / "airport_codes.txt"
 
-# Codes that are definitively NOT airports - only non-airport patterns
-# Real airport codes should NOT be excluded - use context-based detection instead
+# Codes that are definitively NOT airports in email context
+# These appear so frequently in non-airport contexts that they should always be rejected
 EXCLUDED_CODES = {
     # Repeated letters (not real airport codes)
     'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ',
     'KKK', 'LLL', 'MMM', 'NNN', 'OOO', 'PPP', 'QQQ', 'RRR', 'SSS', 'TTT',
     'UUU', 'VVV', 'WWW', 'XXX', 'YYY', 'ZZZ',
+    # Technology/internet terms (these ARE real airports but too confusing in emails)
+    'AOL',  # Paso De Los Libres, Argentina - but aol.com is everywhere
+    'COM',  # Coleman, Australia - but .com is everywhere
+    'PDF',  # Prado, Brazil - but PDF files are everywhere
+    'VIP',  # PAYERNE, Switzerland (military) - but "VIP" is common word
+    'USB',  # Usogorsk, Russia - but USB is technology term
+    'APP',  # Asapa, Papua New Guinea - but "app" is tech term
+    'NET',  # No airport but could be confused
+    'WEB',  # No airport but could be confused
+    # Very obscure airports unlikely to be US domestic travel
+    'SUV',  # Nausori, Fiji
+    'DLR',  # Dalnerechensk, Russia
+    'EST',  # Estherville, Iowa - tiny municipal, also "EST" timezone
+    'PST',  # No major airport, also timezone
+    'CST',  # No major airport, also timezone
+    'MST',  # No major airport, also timezone
 }
 
 # Friendly names for major airports (override file names for cleaner display)

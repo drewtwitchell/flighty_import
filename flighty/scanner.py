@@ -144,7 +144,7 @@ def _build_or_query(terms, field="FROM"):
     return query
 
 
-def _search_individual(mail, since_date, terms, field, all_ids, verbose=True, group_name=""):
+def _search_individual(mail, since_date, terms, field, all_ids):
     """Fall back to individual searches when OR queries fail.
 
     Args:
@@ -153,14 +153,12 @@ def _search_individual(mail, since_date, terms, field, all_ids, verbose=True, gr
         terms: List of search terms
         field: IMAP field (FROM, SUBJECT)
         all_ids: Set to update with found IDs
-        verbose: Print progress
-        group_name: Name of the search group for display
 
     Returns:
         Number of new emails found
     """
     found = 0
-    for i, term in enumerate(terms):
+    for term in terms:
         try:
             criteria = f'(SINCE {since_date} ({field} "{term}"))'
             ids = _imap_search_with_retry(mail, criteria)
@@ -173,12 +171,134 @@ def _search_individual(mail, since_date, terms, field, all_ids, verbose=True, gr
         except Exception:
             pass
 
-        if verbose:
-            # Show progress every 10 terms or at the end
-            if (i + 1) % 10 == 0 or i == len(terms) - 1:
-                print(f"\r      {group_name}... {i+1}/{len(terms)}", end="", flush=True)
-
     return found
+
+
+def _search_by_confirmation_codes(mail, confirmation_codes, already_found_ids, verbose=True):
+    """Search for additional emails containing known confirmation codes.
+
+    This helps find related emails (e.g., check-in reminders, itinerary updates)
+    that might have more complete flight information.
+
+    Args:
+        mail: IMAP connection
+        confirmation_codes: Set of confirmation codes to search for
+        already_found_ids: Set of email IDs already found (to avoid duplicates)
+        verbose: Print progress
+
+    Returns:
+        Dict mapping confirmation code -> set of new email IDs
+    """
+    results = {}
+
+    if not confirmation_codes:
+        return results
+
+    codes_list = list(confirmation_codes)
+
+    for i, code in enumerate(codes_list):
+        if verbose and (i + 1) % 5 == 0:
+            print(f"\r      Searching for related emails... ({i+1}/{len(codes_list)})" + " " * 10, end="", flush=True)
+
+        code_ids = set()
+
+        try:
+            # Search SUBJECT for confirmation code
+            criteria = f'(SUBJECT "{code}")'
+            ids = _imap_search_with_retry(mail, criteria)
+            if ids:
+                code_ids.update(ids - already_found_ids)
+
+            time.sleep(IMAP_SEARCH_DELAY)
+
+            # Search BODY for confirmation code (slower but catches more)
+            criteria = f'(BODY "{code}")'
+            ids = _imap_search_with_retry(mail, criteria)
+            if ids:
+                code_ids.update(ids - already_found_ids)
+
+            time.sleep(IMAP_SEARCH_DELAY)
+
+        except Exception:
+            pass
+
+        if code_ids:
+            results[code] = code_ids
+
+    if verbose and codes_list:
+        print(f"\r      Searching for related emails... ({len(codes_list)}/{len(codes_list)})" + " " * 10, end="", flush=True)
+        print()
+
+    return results
+
+
+def _process_email(mail, email_id, folder):
+    """Fetch and parse a single email.
+
+    Args:
+        mail: IMAP connection
+        email_id: Email ID to fetch
+        folder: Folder name for metadata
+
+    Returns:
+        Dict with email data, or None on failure
+    """
+    raw_email = None
+    for attempt in range(IMAP_MAX_RETRIES):
+        try:
+            result, msg_data = mail.fetch(email_id, '(RFC822)')
+            time.sleep(IMAP_SEARCH_DELAY)
+
+            if result == 'OK' and msg_data and msg_data[0]:
+                raw_email = msg_data[0][1]
+                if raw_email:
+                    break
+
+        except Exception:
+            if attempt < IMAP_MAX_RETRIES - 1:
+                time.sleep(IMAP_RETRY_DELAY)
+
+    if not raw_email:
+        return None
+
+    try:
+        msg = email.message_from_bytes(raw_email)
+        from_addr = decode_header_value(msg.get('From', ''))
+        subject = decode_header_value(msg.get('Subject', ''))
+        date_str = msg.get('Date', '')
+
+        body, html_body = get_email_body(msg)
+        full_body = body or html_body or ""
+
+        email_date = parse_email_date(date_str)
+        confirmation = extract_confirmation_code(subject, full_body)
+        content_hash = generate_content_hash(subject, full_body)
+
+        # Extract flight info
+        flight_info = extract_flight_info(full_body, email_date=email_date, html_body=html_body, from_addr=from_addr, subject=subject)
+
+        # Verify with FlightAware if we have flight numbers
+        if flight_info and flight_info.get('flight_numbers'):
+            flight_info = verify_and_correct_flight_info(flight_info, verify_online=True)
+
+        # Detect airline from sender
+        _, airline = is_flight_email(from_addr, subject)
+
+        return {
+            "email_id": email_id,
+            "msg": msg,
+            "from_addr": from_addr,
+            "subject": subject,
+            "email_date": email_date,
+            "confirmation": confirmation,
+            "flight_info": flight_info,
+            "content_hash": content_hash,
+            "airline": airline,
+            "folder": folder
+        }
+
+    except Exception:
+        return None
 
 
 def _optimized_search(mail, since_date, verbose=True):
@@ -225,9 +345,6 @@ def _optimized_search(mail, since_date, verbose=True):
     total_groups = len(search_groups)
 
     for idx, (group_name, terms, field) in enumerate(search_groups):
-        if verbose:
-            print(f"\r      Searching... ({idx+1}/{total_groups})", end="", flush=True)
-
         if not terms:
             continue
 
@@ -251,22 +368,25 @@ def _optimized_search(mail, since_date, verbose=True):
             # If OR query returned nothing, try fallback
             # (Some servers silently fail on complex queries)
             if not ids and len(terms) > 1:
-                if verbose and not using_fallback:
-                    print()
-                    print("      Note: Using slower individual searches...")
+                if not using_fallback:
                     using_fallback = True
+                    # Notice is printed only on first fallback, after all searching done
 
-                found_in_group = _search_individual(mail, since_date, terms, field, all_ids, verbose=verbose, group_name=group_name)
+                found_in_group = _search_individual(mail, since_date, terms, field, all_ids)
 
         if found_in_group > 0:
             sources[group_name] = found_in_group
+
+        # Update progress after each group
+        if verbose:
+            print(f"\r      Searching... ({idx+1}/{total_groups})" + " " * 20, end="", flush=True)
 
         time.sleep(IMAP_BATCH_DELAY)
 
     if verbose:
         print()  # Newline after progress
 
-    return all_ids, sources
+    return all_ids, sources, using_fallback
 
 
 def _fetch_headers_batch(mail, email_ids, batch_size=50, verbose=True):
@@ -315,7 +435,7 @@ def _fetch_headers_batch(mail, email_ids, batch_size=50, verbose=True):
 
             processed += len(batch)
             if verbose:
-                print(f"\r      Checking... {processed}/{total}", end="", flush=True)
+                print(f"\r      Checking... {processed}/{total}" + " " * 10, end="", flush=True)
 
         except Exception:
             # Fall back to individual fetches if batch fails
@@ -337,7 +457,7 @@ def _fetch_headers_batch(mail, email_ids, batch_size=50, verbose=True):
 
             processed += len(batch)
             if verbose:
-                print(f"\r      Checking... {processed}/{total}", end="", flush=True)
+                print(f"\r      Checking... {processed}/{total}" + " " * 10, end="", flush=True)
 
         # Rate limit between batches
         time.sleep(IMAP_BATCH_DELAY)
@@ -384,13 +504,16 @@ def scan_for_flights(mail, config, folder, processed):
     search_start = time.time()
 
     # Use optimized search with combined OR queries
-    all_email_ids, sources = _optimized_search(mail, since_date, verbose=True)
+    all_email_ids, sources, used_fallback = _optimized_search(mail, since_date, verbose=True)
 
     email_ids = list(all_email_ids)
     total = len(email_ids)
     search_time = time.time() - search_start
 
-    print(f"      Found {total} potential emails ({search_time:.1f}s)")
+    if used_fallback:
+        print(f"      Found {total} potential emails ({search_time:.1f}s) [slow search mode]")
+    else:
+        print(f"      Found {total} potential emails ({search_time:.1f}s)")
 
     if total == 0:
         print("      No emails found from airlines or booking sites.")
@@ -440,7 +563,7 @@ def scan_for_flights(mail, config, folder, processed):
 
         # Progress update
         if download_count % 5 == 0 or download_count == len(flight_candidates):
-            print(f"\r      Processing... {download_count}/{len(flight_candidates)}", end="", flush=True)
+            print(f"\r      Processing... {download_count}/{len(flight_candidates)}" + " " * 10, end="", flush=True)
 
         # Try to fetch with retry logic
         raw_email = None
@@ -537,11 +660,60 @@ def scan_for_flights(mail, config, folder, processed):
             continue
 
     download_time = time.time() - download_start
+    print()
+
+    # Phase 4: Search for related emails by confirmation code
+    # Find confirmation codes that have incomplete flight info (no route)
+    # and search for additional emails that might have more details
+    incomplete_codes = set()
+    all_processed_ids = set(c['email_id'] for c in flight_candidates)
+
+    for conf_code, emails in flights_found.items():
+        # Only search for confirmation codes (not route_* or unknown_* keys)
+        if conf_code.startswith('route_') or conf_code.startswith('unknown_'):
+            continue
+
+        # Check if any email for this code has incomplete route info
+        has_complete_route = False
+        for email_data in emails:
+            flight_info = email_data.get('flight_info', {})
+            if flight_info.get('route') or len(flight_info.get('airports', [])) >= 2:
+                has_complete_route = True
+                break
+
+        if not has_complete_route:
+            incomplete_codes.add(conf_code)
+
+    # Search for related emails if we have incomplete codes
+    related_emails_found = 0
+    if incomplete_codes:
+        print(f"  [4/4] Searching for more details on {len(incomplete_codes)} confirmations...")
+
+        code_to_ids = _search_by_confirmation_codes(mail, incomplete_codes, all_processed_ids, verbose=True)
+
+        # Process the found emails
+        for conf_code, email_ids in code_to_ids.items():
+            for eid in email_ids:
+                email_data = _process_email(mail, eid, folder)
+                if email_data:
+                    related_emails_found += 1
+                    # Add to the confirmation's email list
+                    if conf_code in flights_found:
+                        flights_found[conf_code].append(email_data)
+                    else:
+                        flights_found[conf_code] = [email_data]
+
+        if related_emails_found > 0:
+            print(f"      Found {related_emails_found} related emails")
+        else:
+            print("      No additional emails found")
+
     total_time = time.time() - folder_start
 
-    print()
     # Summary line
     summary_parts = [f"{flight_count} new flights"]
+    if related_emails_found > 0:
+        summary_parts.append(f"{related_emails_found} related")
     if skipped_count > 0:
         summary_parts.append(f"{skipped_count} already imported")
     if marketing_filtered > 0:
@@ -551,6 +723,57 @@ def scan_for_flights(mail, config, folder, processed):
     print(f"  ✓ {folder}: {', '.join(summary_parts)} ({total_time:.1f}s)")
 
     return flights_found, skipped_confirmations
+
+
+def _merge_flight_info(info_list):
+    """Merge flight info from multiple emails into the most complete version.
+
+    Takes the best available data from each email to build a complete picture.
+
+    Args:
+        info_list: List of flight_info dicts from different emails
+
+    Returns:
+        Merged flight_info dict
+    """
+    if not info_list:
+        return {}
+
+    merged = {
+        "airports": [],
+        "flight_numbers": [],
+        "dates": [],
+        "route": None
+    }
+
+    for info in info_list:
+        if not info:
+            continue
+
+        # Take the route if we don't have one
+        if not merged["route"] and info.get("route"):
+            merged["route"] = info["route"]
+
+        # Merge airports (take unique ones)
+        for airport in info.get("airports", []):
+            if airport not in merged["airports"]:
+                merged["airports"].append(airport)
+
+        # Merge flight numbers (take unique ones)
+        for flight_num in info.get("flight_numbers", []):
+            if flight_num not in merged["flight_numbers"]:
+                merged["flight_numbers"].append(flight_num)
+
+        # Merge dates (take unique ones)
+        for date in info.get("dates", []):
+            if date not in merged["dates"]:
+                merged["dates"].append(date)
+
+    # If we have 2+ airports but no route, create route from first two
+    if not merged["route"] and len(merged["airports"]) >= 2:
+        merged["route"] = (merged["airports"][0], merged["airports"][1])
+
+    return merged
 
 
 def _normalize_route(flight_info):
@@ -742,18 +965,35 @@ def select_latest_flights(all_flights, processed):
         emails.sort(key=lambda x: x["email_date"], reverse=True)
         latest = emails[0]
 
+        # Merge flight info from all emails for this confirmation
+        # This combines route, airports, dates, and flight numbers from multiple emails
+        all_flight_infos = [e.get("flight_info", {}) for e in emails if e.get("flight_info")]
+        merged_flight_info = _merge_flight_info(all_flight_infos)
+
+        # Use merged info if it's more complete than the latest email's info
+        latest_flight_info = latest.get("flight_info", {})
+        if merged_flight_info.get("route") and not latest_flight_info.get("route"):
+            latest["flight_info"] = merged_flight_info
+        elif len(merged_flight_info.get("airports", [])) > len(latest_flight_info.get("airports", [])):
+            latest["flight_info"] = merged_flight_info
+        elif merged_flight_info.get("flight_numbers") and not latest_flight_info.get("flight_numbers"):
+            latest["flight_info"] = merged_flight_info
+
         # Filter out flights with no useful data
-        # A valid flight should have either: confirmation code + airports, or just airports with route
+        # For Flighty to properly import, we need at least a route (2 airports)
+        # Confirmation code alone isn't enough - we can't inject useful header info
         flight_info = latest.get("flight_info", {})
         has_confirmation = latest.get("confirmation") is not None
         has_route = flight_info.get("route") is not None
         has_airports = len(flight_info.get("airports", [])) >= 2
+        has_flight_number = len(flight_info.get("flight_numbers", [])) > 0
 
-        if not has_confirmation and not has_route and not has_airports:
-            # No confirmation and no valid route - skip as garbage
+        # Require at least a valid route (2 airports) to forward
+        # A confirmation code alone without route won't help Flighty
+        if not has_route and not has_airports:
             skipped.append({
                 "confirmation": conf_code,
-                "reason": "no confirmation code or valid route",
+                "reason": "no valid route extracted",
                 "subject": latest["subject"][:50],
                 "flight_info": flight_info,
                 "email_date": latest.get("email_date"),
