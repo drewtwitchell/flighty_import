@@ -89,7 +89,18 @@ def auto_update():
             with urllib.request.urlopen(version_url, timeout=5) as response:
                 latest_version = response.read().decode('utf-8').strip()
 
-        if latest_version == VERSION:
+        # Compare versions semantically (major.minor.patch)
+        def parse_version(v):
+            try:
+                parts = v.split('.')
+                return tuple(int(p) for p in parts)
+            except (ValueError, AttributeError):
+                return (0, 0, 0)
+
+        current_ver = parse_version(VERSION)
+        latest_ver = parse_version(latest_version)
+
+        if latest_ver <= current_ver:
             print(f"  You have the latest version (v{VERSION})")
             print()
             return False
