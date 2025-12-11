@@ -3,6 +3,7 @@ Email handling: IMAP connection, SMTP forwarding, email parsing.
 """
 
 import imaplib
+import logging
 import smtplib
 import email
 import email.header
@@ -12,6 +13,8 @@ from datetime import datetime, timedelta
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 from email.utils import parsedate_to_datetime
+
+logger = logging.getLogger(__name__)
 
 from .airports import VALID_AIRPORT_CODES
 from .parser import (
@@ -113,12 +116,23 @@ def get_email_body(msg):
             content_type = part.get_content_type()
             content_disposition = str(part.get("Content-Disposition", ""))
 
-            if "attachment" not in content_disposition:
-                text = _decode_payload(part)
-                if text:
-                    if content_type == "text/plain":
+            # Skip attachments
+            if "attachment" in content_disposition:
+                continue
+
+            # Skip multipart containers - they don't have payload we can decode
+            if content_type.startswith("multipart/"):
+                continue
+
+            text = _decode_payload(part)
+            if text:
+                if content_type == "text/plain":
+                    # Prefer larger plain text (some emails have multiple text/plain parts)
+                    if len(text) > len(body):
                         body = text
-                    elif content_type == "text/html":
+                elif content_type == "text/html":
+                    # Prefer larger HTML (some emails have multiple text/html parts)
+                    if len(text) > len(html_body):
                         html_body = text
     else:
         text = _decode_payload(msg)

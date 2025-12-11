@@ -290,6 +290,10 @@ _EXCLUDED_CONFIRMATION_CODES = {
     'CLOSER', 'EXCESS', 'RENTAL', 'REDEEM', 'HILTON', 'MARTHA', 'REWARD',
     'TERMS', 'HEIGHT', 'BORDER', 'EXPECT', 'HOTELS', 'BUNDLE', 'LIGHTS',
     'PREFER', 'NUMBER', 'DOESN',
+    # URL/protocol terms
+    'HTTPS', 'EMAIL', 'CLICK', 'TRACK', 'VIEWS', 'LINKS',
+    # More false positives
+    'HOLDS', 'ITEMS', 'CARDS', 'SAVES', 'WORKS', 'PLANS',
     # More words found as false positives in email scanning
     'VALID', 'DATES', 'STILL', 'THROUGH', 'INVOICES', 'INVOICE',
     'PURCHASE', 'ORIGINAL', 'ORIGINAL', 'CHARGED', 'AMOUNT', 'CUSTOMER',
@@ -590,10 +594,21 @@ def strip_html_tags(html_text):
         text = unescape(text)
         # Normalize whitespace
         text = re.sub(r'\s+', ' ', text)
-        return text.strip()
+        result = text.strip()
+
+        # If HTMLParser returns empty but we have HTML, use regex fallback
+        # This happens with some complex/malformed HTML emails
+        if not result and len(html_text) > 100:
+            text = re.sub(r'<[^>]+>', ' ', html_text)
+            text = unescape(text)
+            text = re.sub(r'\s+', ' ', text)
+            result = text.strip()
+
+        return result
     except Exception:
         # Fallback: simple regex strip
         text = re.sub(r'<[^>]+>', ' ', html_text)
+        text = unescape(text)
         text = re.sub(r'\s+', ' ', text)
         return text.strip()
 
@@ -790,6 +805,58 @@ def validate_airport_code(code):
 # Cache for flight verification results (to avoid repeated lookups)
 _FLIGHT_VERIFICATION_CACHE = {}
 
+# IATA to ICAO airline code mapping for FlightAware lookups
+# FlightAware uses ICAO codes (3-letter) in their URLs
+IATA_TO_ICAO = {
+    # Major US Airlines
+    'AA': 'AAL',  # American Airlines
+    'DL': 'DAL',  # Delta
+    'UA': 'UAL',  # United
+    'WN': 'SWA',  # Southwest
+    'B6': 'JBU',  # JetBlue
+    'AS': 'ASA',  # Alaska Airlines
+    'NK': 'NKS',  # Spirit
+    'F9': 'FFT',  # Frontier
+    'G4': 'AAY',  # Allegiant
+    'HA': 'HAL',  # Hawaiian Airlines
+    'SY': 'SCX',  # Sun Country
+    # International Carriers
+    'BA': 'BAW',  # British Airways
+    'LH': 'DLH',  # Lufthansa
+    'AF': 'AFR',  # Air France
+    'KL': 'KLM',  # KLM
+    'AC': 'ACA',  # Air Canada
+    'QF': 'QFA',  # Qantas
+    'EK': 'UAE',  # Emirates
+    'QR': 'QTR',  # Qatar Airways
+    'SQ': 'SIA',  # Singapore Airlines
+    'CX': 'CPA',  # Cathay Pacific
+    'JL': 'JAL',  # Japan Airlines
+    'NH': 'ANA',  # All Nippon Airways
+    'TK': 'THY',  # Turkish Airlines
+    'LX': 'SWR',  # Swiss
+    'AZ': 'ITY',  # ITA Airways (was Alitalia)
+    'IB': 'IBE',  # Iberia
+    'VS': 'VIR',  # Virgin Atlantic
+    'EI': 'EIN',  # Aer Lingus
+    'SK': 'SAS',  # SAS Scandinavian
+    'AY': 'FIN',  # Finnair
+    'TP': 'TAP',  # TAP Portugal
+    'OS': 'AUA',  # Austrian
+    'SN': 'BEL',  # Brussels Airlines
+    'AM': 'AMX',  # Aeromexico
+    'CM': 'CMP',  # Copa Airlines
+    'AV': 'AVA',  # Avianca
+    'LA': 'LAN',  # LATAM
+    # Low Cost Carriers
+    'FR': 'RYR',  # Ryanair
+    'U2': 'EZY',  # easyJet
+    'VY': 'VLG',  # Vueling
+    'W6': 'WZZ',  # Wizz Air
+    'XP': 'CXP',  # Avelo Airlines
+    'MX': 'MXY',  # Breeze Airways
+}
+
 
 def verify_flight_exists(airline_code, flight_num, date_str=None):
     """Verify a flight exists using FlightAware.
@@ -797,60 +864,156 @@ def verify_flight_exists(airline_code, flight_num, date_str=None):
     This checks if the flight number is real and gets the route.
     Results are cached to avoid repeated lookups.
 
+    If a date is provided, we check the flight history to verify the route
+    on that specific day (since the same flight number can operate different
+    routes on different days).
+
     Args:
         airline_code: 2-letter IATA code (e.g., "B6")
         flight_num: Flight number (e.g., "123")
-        date_str: Optional date string to verify flight on specific day
+        date_str: Optional date string (e.g., "December 07, 2025") to verify flight on specific day
 
     Returns:
-        Dict with 'exists', 'origin', 'dest', 'verified_route' if found, or None if couldn't verify
+        Dict with 'exists', 'origin', 'dest', 'verified_route', 'date_matched' if found, or None if couldn't verify
     """
+    # Include date in cache key if provided
     cache_key = f"{airline_code}{flight_num}"
+    if date_str:
+        cache_key += f"_{date_str}"
+
     if cache_key in _FLIGHT_VERIFICATION_CACHE:
         return _FLIGHT_VERIFICATION_CACHE[cache_key]
 
     try:
-        # FlightAware has a public flight tracking page we can check
-        url = f"https://www.flightaware.com/live/flight/{airline_code}{flight_num}"
+        # Convert IATA to ICAO code for FlightAware URL
+        # FlightAware uses ICAO codes (e.g., JBU652 not B6652)
+        icao_code = IATA_TO_ICAO.get(airline_code.upper(), airline_code)
+        flight_id = f"{icao_code}{flight_num}"
+
+        result = {'exists': True, 'origin': None, 'dest': None, 'verified_route': False, 'date_matched': False}
+
+        # If we have a date, use the history page to find the route for that specific day
+        if date_str:
+            # Parse the date to get YYYYMMDD format
+            target_date = None
+            date_formats = [
+                '%B %d, %Y',     # December 07, 2025
+                '%b %d, %Y',     # Dec 07, 2025
+                '%Y-%m-%d',      # 2025-12-07
+                '%m/%d/%Y',      # 12/07/2025
+            ]
+            for fmt in date_formats:
+                try:
+                    parsed = datetime.strptime(date_str, fmt)
+                    target_date = parsed.strftime('%Y%m%d')
+                    break
+                except ValueError:
+                    continue
+
+            if target_date:
+                # Fetch the history page
+                history_url = f"https://www.flightaware.com/live/flight/{flight_id}/history"
+                logger.debug(f"FlightAware history lookup: {history_url} for date {target_date}")
+
+                req = urllib.request.Request(
+                    history_url,
+                    headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
+                )
+
+                with urllib.request.urlopen(req, timeout=10) as response:
+                    html = response.read().decode('utf-8', errors='ignore')
+
+                # Look for history entries: flight/JBU652/history/20251207/2310Z/KMCO/KBOS
+                history_pattern = rf'flight/{re.escape(flight_id)}/history/(\d{{8}})/\d+Z/([A-Z]{{4}})/([A-Z]{{4}})'
+                history_entries = re.findall(history_pattern, html)
+
+                # Find an entry matching our target date
+                for entry_date, icao_orig, icao_dest in history_entries:
+                    if entry_date == target_date:
+                        # Convert ICAO (KMCO) to IATA (MCO) - US airports start with K
+                        origin_iata = icao_orig[1:] if icao_orig.startswith('K') and len(icao_orig) == 4 else icao_orig
+                        dest_iata = icao_dest[1:] if icao_dest.startswith('K') and len(icao_dest) == 4 else icao_dest
+                        result['origin'] = origin_iata
+                        result['dest'] = dest_iata
+                        result['verified_route'] = True
+                        result['date_matched'] = True
+                        logger.debug(f"FlightAware history MATCH: {origin_iata} → {dest_iata} on {target_date}")
+                        _FLIGHT_VERIFICATION_CACHE[cache_key] = result
+                        return result
+
+                # No exact date match, try to get the most common route from history
+                if history_entries:
+                    # Count routes to find the most common one
+                    route_counts = {}
+                    for _, icao_orig, icao_dest in history_entries:
+                        origin_iata = icao_orig[1:] if icao_orig.startswith('K') and len(icao_orig) == 4 else icao_orig
+                        dest_iata = icao_dest[1:] if icao_dest.startswith('K') and len(icao_dest) == 4 else icao_dest
+                        route_key = (origin_iata, dest_iata)
+                        route_counts[route_key] = route_counts.get(route_key, 0) + 1
+
+                    # Use the most common route
+                    most_common = max(route_counts.items(), key=lambda x: x[1])
+                    result['origin'] = most_common[0][0]
+                    result['dest'] = most_common[0][1]
+                    result['verified_route'] = True
+                    result['date_matched'] = False  # Didn't match exact date
+                    logger.debug(f"FlightAware history (most common): {result['origin']} → {result['dest']} (date {target_date} not in history)")
+                    _FLIGHT_VERIFICATION_CACHE[cache_key] = result
+                    return result
+
+        # Fall back to the main flight page (no date or history failed)
+        url = f"https://www.flightaware.com/live/flight/{flight_id}"
+        logger.debug(f"FlightAware lookup: {url}")
+
         req = urllib.request.Request(
             url,
             headers={'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36'}
         )
 
-        with urllib.request.urlopen(req, timeout=8) as response:
+        with urllib.request.urlopen(req, timeout=10) as response:
             html = response.read().decode('utf-8', errors='ignore')
 
-            result = {'exists': True, 'origin': None, 'dest': None, 'verified_route': False}
+            # FlightAware embeds route data in JavaScript targeting calls
+            # Look for: setTargeting('origin_IATA', 'MCO') and setTargeting('destination_IATA', 'BOS')
+            origin_match = re.search(r"['\"]origin_IATA['\"],\s*['\"]([A-Z]{3})['\"]", html)
+            dest_match = re.search(r"['\"]destination_IATA['\"],\s*['\"]([A-Z]{3})['\"]", html)
 
-            # FlightAware shows routes in multiple formats, try to find them
-            # Pattern 1: In the page content as "BOS - SFO" or "BOS → SFO"
-            route_patterns = [
-                r'<title>[^<]*\b([A-Z]{3})\s*[-→–]\s*([A-Z]{3})\b',  # In title
-                r'Origin</th>\s*<td[^>]*>\s*<[^>]*>([A-Z]{3})<',  # Origin field
-                r'Destination</th>\s*<td[^>]*>\s*<[^>]*>([A-Z]{3})<',  # Dest field
-                r'\b([A-Z]{3})\s*(?:→|->|–|-|to)\s*([A-Z]{3})\b',  # General route pattern
-            ]
+            if origin_match and dest_match:
+                result['origin'] = origin_match.group(1).upper()
+                result['dest'] = dest_match.group(1).upper()
+                result['verified_route'] = True
+                logger.debug(f"FlightAware verified: {result['origin']} → {result['dest']}")
+            else:
+                # Fallback: Try other patterns in page content
+                route_patterns = [
+                    r'<title>[^<]*\b([A-Z]{3})\s*[-→–]\s*([A-Z]{3})\b',  # In title
+                    r'\b([A-Z]{3})\s*(?:→|->|–)\s*([A-Z]{3})\b',  # Arrow route pattern
+                ]
 
-            for pattern in route_patterns:
-                match = re.search(pattern, html, re.IGNORECASE)
-                if match:
-                    groups = match.groups()
-                    if len(groups) >= 2:
-                        result['origin'] = groups[0].upper()
-                        result['dest'] = groups[1].upper()
+                for pattern in route_patterns:
+                    match = re.search(pattern, html)
+                    if match:
+                        result['origin'] = match.group(1).upper()
+                        result['dest'] = match.group(2).upper()
                         result['verified_route'] = True
+                        logger.debug(f"FlightAware fallback verified: {result['origin']} → {result['dest']}")
                         break
-                    elif len(groups) == 1:
-                        if not result['origin']:
-                            result['origin'] = groups[0].upper()
-                        elif not result['dest']:
-                            result['dest'] = groups[0].upper()
+
+                if not result['verified_route']:
+                    logger.debug(f"FlightAware: flight page found but couldn't extract route")
 
             _FLIGHT_VERIFICATION_CACHE[cache_key] = result
             return result
 
-    except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, Exception):
-        # Couldn't verify - that's okay, we'll rely on other methods
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            logger.debug(f"FlightAware: flight {airline_code}{flight_num} not found (404)")
+        else:
+            logger.debug(f"FlightAware HTTP error: {e.code}")
+        _FLIGHT_VERIFICATION_CACHE[cache_key] = None
+        return None
+    except Exception as e:
+        logger.debug(f"FlightAware lookup failed: {e}")
         _FLIGHT_VERIFICATION_CACHE[cache_key] = None
         return None
 
@@ -911,29 +1074,119 @@ def verify_and_correct_flight_info(flight_info, verify_online=True):
     if not flight_numbers:
         return flight_info
 
+    # Get the first date from flight info for date-specific verification
+    dates = flight_info.get('dates', [])
+    first_date = dates[0] if dates else None
+
+    logger.debug(f"  -> Verifying flight via FlightAware: {flight_numbers[0]} (date: {first_date})")
+
     # Try to verify with the first flight number
     for fn in flight_numbers[:1]:
         # Parse flight number - could be "B6 123" or "B6123"
-        match = re.match(r'^([A-Z]{2})\s*(\d+)$', fn)
+        # Airline codes can be 2 letters (AA, DL) or letter+digit (B6, F9, G4)
+        match = re.match(r'^([A-Z][A-Z0-9])\s*(\d+)$', fn)
         if not match:
+            logger.debug(f"  -> Flight number format not recognized: {fn}")
             continue
 
         airline_code = match.group(1)
         flight_num = match.group(2)
 
-        verified = verify_flight_exists(airline_code, flight_num)
+        # Pass date for date-specific verification
+        verified = verify_flight_exists(airline_code, flight_num, date_str=first_date)
         if verified and verified.get('verified_route'):
             actual_origin = verified.get('origin')
             actual_dest = verified.get('dest')
+            date_matched = verified.get('date_matched', False)
 
             if actual_origin and actual_dest:
-                # Update flight info with verified route
-                flight_info['route'] = (actual_origin, actual_dest)
-                flight_info['airports'] = [actual_origin, actual_dest]
-                flight_info['route_verified'] = True
-                break
+                # Validate that verified airports aren't excluded codes
+                origin_valid, _ = validate_airport_code(actual_origin)
+                dest_valid, _ = validate_airport_code(actual_dest)
+                if origin_valid and dest_valid:
+                    old_route = flight_info.get('route')
+                    # Update flight info with verified route
+                    flight_info['route'] = (actual_origin, actual_dest)
+                    flight_info['airports'] = [actual_origin, actual_dest]
+                    flight_info['route_verified'] = True
+                    flight_info['date_verified'] = date_matched
+
+                    if date_matched:
+                        logger.debug(f"  -> FlightAware VERIFIED (date matched): {actual_origin} → {actual_dest} (was: {old_route})")
+                    else:
+                        logger.debug(f"  -> FlightAware VERIFIED (most common route): {actual_origin} → {actual_dest} (was: {old_route})")
+                    break
+        else:
+            logger.debug(f"  -> FlightAware: could not verify route for {fn}")
 
     return flight_info
+
+
+def _code_appears_as_regular_word(code, text):
+    """Check if a 3-letter code appears as a regular English word in context.
+
+    This helps distinguish between:
+    - "BUY" as airport code vs "buy points now"
+    - "PAY" as airport code vs "pay your bill"
+    - "NON" as airport code vs "non-refundable"
+
+    The key insight: Real airport codes in flight emails appear in UPPERCASE
+    in contexts like "MCO BOS" or "Departing: JFK". If the code appears
+    predominantly in lowercase or mixed-case as part of regular sentences,
+    it's likely just a regular word, not an airport code.
+
+    Args:
+        code: 3-letter airport code (uppercase)
+        text: Email text to search
+
+    Returns:
+        True if the code appears to be used as a regular word (NOT an airport)
+    """
+    code_lower = code.lower()
+
+    # Find all occurrences of this code (case-insensitive)
+    pattern = r'\b' + re.escape(code_lower) + r'\b'
+    matches = list(re.finditer(pattern, text, re.IGNORECASE))
+
+    if not matches:
+        return False
+
+    uppercase_count = 0
+    lowercase_count = 0
+
+    for match in matches:
+        matched_text = match.group()
+        if matched_text.isupper():
+            uppercase_count += 1
+        else:
+            lowercase_count += 1
+
+    # If the code appears more often in lowercase/mixed case than uppercase,
+    # it's probably being used as a regular word
+    if lowercase_count > uppercase_count:
+        return True
+
+    # Also check the immediate context - if it's in a phrase like "buy now" or "pay here"
+    # those are strong indicators it's a regular word
+    # Note: Be careful not to match flight-related patterns like "MCO to BOS"
+    regular_word_contexts = [
+        # Common verb phrases (exclude "to" which is used in routes like "MCO to BOS")
+        rf'\b{code_lower}\s+(?:now|here|today|online|more|it|this|that|them|the|a|an|for|your|our|my)\b',
+        rf'\b(?:can|will|should|must|please|you|we|i|dont|don\'t)\s+{code_lower}\b',
+        # Common adjective/noun usage
+        rf'\b{code_lower}[-](?:stop|refundable|smoking|alcoholic|transferable|applicable)\b',
+        rf'\b(?:non|pre|re)[-]{code_lower}\b',
+        # Financial terms (APR = Annual Percentage Rate)
+        rf'\b(?:lower|low|high|fixed|variable|annual|current|your)[-\s]{code_lower}\b',
+        rf'\b{code_lower}[-\s](?:rate|loan|offer|credit|card|interest|financing)\b',
+        rf'\b\d+(?:\.\d+)?%?\s*{code_lower}\b',  # "0% APR", "5.99% APR"
+    ]
+
+    for ctx_pattern in regular_word_contexts:
+        if re.search(ctx_pattern, text, re.IGNORECASE):
+            return True
+
+    return False
 
 
 def _verify_airport_in_context(code, airport_name, text):
@@ -959,6 +1212,11 @@ def _verify_airport_in_context(code, airport_name, text):
         # Use word boundary check
         pattern = r'\b' + re.escape(word) + r'\b'
         return bool(re.search(pattern, text, re.IGNORECASE))
+
+    # First check if this code appears as a lowercase word in context
+    # If it appears as lowercase (e.g. "buy" in "buy points"), it's NOT an airport
+    if _code_appears_as_regular_word(code, text):
+        return False
 
     # Get the friendly name which is usually the city
     friendly = FRIENDLY_NAMES.get(code, '')
@@ -1079,34 +1337,73 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
 
     # Strategy 1: "City Name (ABC)" format - highest confidence
     # This is explicit: "Los Angeles (LAX)" - always trust these
+    # But we must verify the city name actually corresponds to the airport code
+    # to avoid matching garbage like "Personal Effects Coverage (PEC)"
     city_code_pattern = re.compile(r'([A-Za-z][A-Za-z\s]{2,30})\s*\(([A-Z]{3})\)')
     city_matches = city_code_pattern.findall(text)
     logger.debug(f"    Strategy 1 (City Name (ABC)): found {len(city_matches)} matches: {city_matches[:5]}")
     for city, code in city_matches:
         code = code.upper()
+        city_clean = city.strip().lower()
+
+        # Verify this city name actually maps to this airport code
+        # This prevents "Personal Effects Coverage (PEC)" from being accepted
+        expected_code = city_to_airport_code(city_clean)
+        if expected_code != code:
+            # City name doesn't map to this code - skip it
+            # But check if the airport name contains this city
+            is_valid, name = validate_airport_code(code)
+            if is_valid and name:
+                # Check if the text before the code is actually a city/airport name
+                name_words = name.lower().split()
+                city_words = city_clean.split()
+                # Must have at least one significant word match (4+ chars)
+                has_match = False
+                for cw in city_words:
+                    if len(cw) >= 4:
+                        for nw in name_words:
+                            if len(nw) >= 4 and (cw in nw or nw in cw):
+                                has_match = True
+                                break
+                if has_match and code not in seen:
+                    seen.add(code)
+                    airports.append((code, name, 'high'))
+                    logger.debug(f"      -> Added {code} from 'City (CODE)' pattern (name match)")
+            continue
+
+        # City name directly maps to code - definitely valid
         is_valid, name = validate_airport_code(code)
         if is_valid and code not in seen:
             seen.add(code)
             airports.append((code, name, 'high'))
-            logger.debug(f"      -> Added {code} from 'City (CODE)' pattern")
+            logger.debug(f"      -> Added {code} from 'City (CODE)' pattern (direct city match)")
 
-    # Strategy 2: Route patterns "ABC → DEF" or "ABC to DEF"
+    # Strategy 2: Route patterns "ABC → DEF" or "BOS to LAX"
     # Clear route format - high confidence
+    # The "to" pattern must use uppercase only to avoid matching "due to the"
     route_patterns = [
         re.compile(r'\b([A-Z]{3})\s*(?:→|->|►|–|—)\s*([A-Z]{3})\b'),
-        re.compile(r'\b([A-Z]{3})\s+to\s+([A-Z]{3})\b', re.IGNORECASE),
+        re.compile(r'\b([A-Z]{3})\s+to\s+([A-Z]{3})\b'),  # No IGNORECASE - both must be uppercase
     ]
     for i, pattern in enumerate(route_patterns):
         matches = pattern.findall(text)
         if matches:
             logger.debug(f"    Strategy 2 (Route pattern {i+1}): found {matches}")
         for origin, dest in matches:
-            for code in [origin.upper(), dest.upper()]:
-                is_valid, name = validate_airport_code(code)
-                if is_valid and code not in seen:
-                    seen.add(code)
-                    airports.append((code, name, 'high'))
-                    logger.debug(f"      -> Added {code} from route pattern")
+            origin_up = origin.upper()
+            dest_up = dest.upper()
+            # Both must be valid airport codes
+            origin_valid, origin_name = validate_airport_code(origin_up)
+            dest_valid, dest_name = validate_airport_code(dest_up)
+            if origin_valid and dest_valid:
+                if origin_up not in seen:
+                    seen.add(origin_up)
+                    airports.append((origin_up, origin_name, 'high'))
+                    logger.debug(f"      -> Added {origin_up} from route pattern")
+                if dest_up not in seen:
+                    seen.add(dest_up)
+                    airports.append((dest_up, dest_name, 'high'))
+                    logger.debug(f"      -> Added {dest_up} from route pattern")
 
     # Strategy 3: If we know the airline, look for their hub airports
     # This is strong evidence - if Delta email mentions ATL, it's almost certainly correct
@@ -1130,6 +1427,7 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
 
     # Strategy 4: Contextual patterns
     # Accept if: strong flight evidence OR city name verified OR airline hub
+    # BUT: Always reject if the code is used as a regular English word in the text
     context_pattern = re.compile(
         r'(?:depart(?:ure|ing|s)?|arriv(?:al|ing|es)?|from|to|origin|destination|airport)[:\s]+([A-Z]{3})\b',
         re.IGNORECASE
@@ -1142,6 +1440,12 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
             continue
         is_valid, name = validate_airport_code(code)
         if is_valid:
+            # First check: reject if this code appears as a regular English word
+            is_regular_word = _code_appears_as_regular_word(code, text)
+            if is_regular_word:
+                logger.debug(f"      Code {code}: rejected - appears as regular word in text")
+                continue
+
             # Accept if: strong flight evidence OR city name in text OR airline hub
             city_verified = _verify_airport_in_context(code, name, text)
             airline_verified = validate_airport_for_airline(code, airline) in ('hub', 'served')
@@ -1162,6 +1466,7 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
 
     # Strategy 5: Look for 3-letter codes near flight keywords
     # Accept if: strong flight evidence OR city verified OR airline hub
+    # BUT: Always reject if the code is used as a regular English word in the text
     logger.debug(f"    Strategy 5 (Near keywords): airports so far = {len(airports)}")
     if len(airports) < 2:
         flight_keywords = [
@@ -1181,6 +1486,10 @@ def extract_airports_from_text(text, from_addr=None, verify_online=False, is_con
 
             is_valid, name = validate_airport_code(code)
             if not is_valid:
+                continue
+
+            # First check: reject if this code appears as a regular English word
+            if _code_appears_as_regular_word(code, text):
                 continue
 
             # Must be near flight keywords
@@ -1276,10 +1585,11 @@ def _extract_airports_from_city_names(text, existing_airports, seen_codes):
 
     # If still not enough, try single city mentions near flight keywords
     if len(airports) < 2:
-        flight_keywords = ['flight', 'flying', 'trip', 'travel', 'arriving', 'departing', 'destination']
+        flight_keywords = ['flight', 'flying', 'trip', 'travel', 'arriving', 'departing', 'destination', 'check', 'expect']
         text_lower = text.lower()
 
-        for city_name in city_names[:100]:  # Check top 100 cities
+        # Check all city names (sorted by length to prefer specific matches)
+        for city_name in city_names:
             if city_name in text_lower:
                 code = CITY_TO_AIRPORT.get(city_name)
                 if code and code not in seen:
@@ -1474,9 +1784,18 @@ def extract_flight_info(body, email_date=None, html_body=None, from_addr=None, s
         logger.debug("  -> No schema.org data found")
 
     # Strip HTML for text parsing
+    # Use HTML body if plain text body is empty/short
     text = strip_html_tags(body)
     text_len = len(text)
     logger.debug(f"  -> Stripped text length: {text_len} chars")
+
+    # If plain text body is too short, try extracting text from HTML body
+    if text_len < 100 and html_body:
+        html_text = strip_html_tags(html_body)
+        if len(html_text) > text_len:
+            text = html_text
+            text_len = len(text)
+            logger.debug(f"  -> Using HTML body instead, length: {text_len} chars")
 
     # Include subject in text for pattern matching
     if subject:

@@ -17,6 +17,7 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 - **Rate limit handling** - Automatically retries when email providers throttle sending
 - **9,800+ airport codes** - Full IATA database with common word filtering
 - **City name recognition** - Understands "Boston to Las Vegas" and converts to airport codes
+- **FlightAware verification** - Verifies flight routes against FlightAware data for accuracy
 - **Marketing email filtering** - Automatically ignores promotional emails from airlines
 - **Smart flight merging** - Groups related emails by confirmation code or route+date
 
@@ -271,6 +272,9 @@ crontab -e
 
 ## Version History
 
+- **v2.19.0** - FlightAware date-based route verification: verifies flight routes against specific dates using FlightAware history. Improved context-based false positive detection for airport codes (APR, LLC, etc.)
+- **v2.18.0** - Fix email body extraction for non-UTF-8 encodings
+- **v2.17.0** - Fix false positive parsing issues
 - **v2.16.0** - Added --debug flag for detailed extraction logging to diagnose parsing issues
 - **v2.15.0** - Improved airport/route extraction: pass subject+from to parser, more airline patterns
 - **v2.14.0** - Major fix: reject English words as confirmation codes (SEARCH, HOTELS, etc.)

@@ -10,65 +10,13 @@ from pathlib import Path
 _DATA_DIR = Path(__file__).parent.parent
 AIRPORT_CODES_FILE = _DATA_DIR / "airport_codes.txt"
 
-# Common English words that happen to be 3 letters - exclude these
-# These cause false positives when parsing email text
+# Codes that are definitively NOT airports - only non-airport patterns
+# Real airport codes should NOT be excluded - use context-based detection instead
 EXCLUDED_CODES = {
-    # Common words
-    'THE', 'AND', 'FOR', 'ARE', 'BUT', 'NOT', 'YOU', 'ALL', 'CAN', 'HAD',
-    'HER', 'WAS', 'ONE', 'OUR', 'OUT', 'DAY', 'GET', 'HAS', 'HIM', 'HIS',
-    'HOW', 'ITS', 'MAY', 'NEW', 'NOW', 'OLD', 'SEE', 'WAY', 'WHO', 'BOY',
-    'DID', 'SAY', 'SHE', 'TOO', 'USE', 'AIR', 'FLY', 'RUN', 'TRY', 'CAR',
-    'END', 'PRE', 'PRO', 'VIA', 'PER', 'NET', 'WEB', 'APP', 'API', 'URL',
-    'USA', 'CRO', 'CSS', 'PHP', 'SQL', 'XML', 'PDF', 'JPG', 'PNG', 'GIF',
-    # More common words that appear in emails
-    'ADD', 'AGO', 'ANY', 'ASK', 'BAD', 'BAG', 'BIG', 'BIT', 'BOX', 'BUS',
-    'BUY', 'CUT', 'DOC', 'DUE', 'EAT', 'FAR', 'FAX', 'FEW', 'FIT', 'FUN',
-    'GOT', 'GUN', 'GUY', 'HOT', 'JOB', 'KEY', 'KID', 'LAW', 'LAY', 'LED',
-    'LET', 'LIE', 'LOG', 'LOT', 'LOW', 'MAN', 'MAP', 'MEN', 'MET', 'MIX',
-    'MOM', 'NOR', 'ODD', 'OFF', 'OIL', 'PAY', 'PEN', 'PET', 'PIN', 'POP',
-    'POT', 'PUT', 'RAW', 'RED', 'REF', 'RID', 'ROW', 'SAT', 'SET', 'SIT',
-    'SIX', 'SKY', 'SON', 'SUM', 'SUN', 'TAX', 'TEN', 'TIP', 'TOP', 'TOY',
-    'TWO', 'VAN', 'WAR', 'WAS', 'WET', 'WIN', 'WON', 'YES', 'YET', 'ZIP',
-    # Email/travel specific words that aren't airports
-    'COM', 'ORG', 'EDU', 'GOV', 'MIL', 'BIZ', 'INFO',
-    'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN',  # Days
-    'JAN', 'FEB', 'MAR', 'APR', 'JUN', 'JUL', 'AUG', 'SEP', 'OCT', 'NOV', 'DEC',  # Months
-    # False positive "airport codes" that appear in emails but aren't real routes
-    'NON', 'APY', 'CIA',  # CIA is Rome Ciampino but rarely used in US travel emails
+    # Repeated letters (not real airport codes)
     'AAA', 'BBB', 'CCC', 'DDD', 'EEE', 'FFF', 'GGG', 'HHH', 'III', 'JJJ',
     'KKK', 'LLL', 'MMM', 'NNN', 'OOO', 'PPP', 'QQQ', 'RRR', 'SSS', 'TTT',
-    'UUU', 'VVV', 'WWW', 'XXX', 'YYY', 'ZZZ',  # Repeated letters not real codes
-    # Obscure airports that cause false positives in email parsing
-    'PEC',  # Pelican SPB - tiny seaplane base in Alaska, also "Personal Effects Coverage"
-    'HIT',  # Haivaro - tiny airport in Papua New Guinea
-    'GAP',  # Gusap - tiny PNG airport
-    'TAB',  # Tabora - Tanzania
-    'WEB',  # Web - sounds like internet
-    'LOG',  # Longana - Vanuatu
-    'DOT',  # Tawi-Tawi - Philippines
-    'LET',  # Leticia - Colombia
-    'CAT',  # Cat Island - Bahamas but "CAT" appears in text
-    'POP',  # Puerto Plata - but "POP" appears in emails
-    'TOP',  # Topeka - but rarely used
-    'TAP',  # appears in emails
-    'TON',  # Tonu - PNG
-    'BAN',  # appears in text
-    'RUN',  # appears in text
-    # False positives from Enterprise/rental car ads
-    'RAP',  # Rapid City SD, but matches "Roadside Assistance Protection"
-    'SLP',  # San Luis Potosi Mexico, but matches "Supplemental Liability Protection"
-    # Very obscure airports that cause false positives in domestic US emails
-    'CUS',  # Columbus NM - tiny municipal airport, false positive from "customer"
-    'MER',  # Castle AFB - closed military base, false positive from "mer" in words
-    'LOS',  # Lagos Nigeria - appears in partial word matches
-    'ADD',  # Addis Ababa - appears in English text as "add"
-    'USE',  # Useless Loop Australia - appears in English text
-    'WAY',  # Waycross GA - appears in English text
-    'OWN',  # Norwood MA - appears in English text
-    'CAP',  # Cap Haitien - appears in text
-    'PAL',  # Palenque Mexico - appears in text
-    'PAT',  # Patna India - appears in text
-    'PAD',  # Paderborn Germany - appears in text
+    'UUU', 'VVV', 'WWW', 'XXX', 'YYY', 'ZZZ',
 }
 
 # Friendly names for major airports (override file names for cleaner display)
