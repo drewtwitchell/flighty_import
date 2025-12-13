@@ -17,9 +17,9 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 - **Rate limit handling** - Automatically retries when email providers throttle sending
 - **9,800+ airport codes** - Full IATA database with common word filtering
 - **City name recognition** - Understands "Boston to Las Vegas" and converts to airport codes
-- **FlightAware verification** - Verifies flight routes against FlightAware data for accuracy
 - **Marketing email filtering** - Automatically ignores promotional emails from airlines
 - **Smart flight merging** - Groups related emails by confirmation code or route+date
+- **Clean email generation** - Creates simple, clean emails for Flighty instead of forwarding messy originals
 
 ## How It Works
 
@@ -272,28 +272,22 @@ crontab -e
 
 ## Version History
 
-- **v2.19.0** - FlightAware date-based route verification: verifies flight routes against specific dates using FlightAware history. Improved context-based false positive detection for airport codes (APR, LLC, etc.)
+- **v2.49.0** - Clean email generation: creates simple emails with just flight data instead of forwarding messy airline emails
+- **v2.48.0** - Multi-airline support: Added Delta email format, Cape Air codeshare patterns, removed dead code
+- **v2.27.1** - Fix datetime comparison error in sorting
+- **v2.27.0** - Refactor flight processing with proper verification
+- **v2.26.0** - Fix route merging from unrelated emails
+- **v2.25.0** - Require verification for flights without confirmation codes
+- **v2.24.0** - Exclude false positive airport codes
+- **v2.19.0** - Improved context-based false positive detection for airport codes (APR, LLC, etc.)
 - **v2.18.0** - Fix email body extraction for non-UTF-8 encodings
-- **v2.17.0** - Fix false positive parsing issues
-- **v2.16.0** - Added --debug flag for detailed extraction logging to diagnose parsing issues
-- **v2.15.0** - Improved airport/route extraction: pass subject+from to parser, more airline patterns
+- **v2.16.0** - Added --debug flag for detailed extraction logging
 - **v2.14.0** - Major fix: reject English words as confirmation codes (SEARCH, HOTELS, etc.)
-- **v2.13.0** - FlightAware route verification; smart airport acceptance with strong flight evidence
-- **v2.12.1** - Fix false positive city name matches (San/SAN)
-- **v2.12.0** - Airline-aware airport validation (uses airline hubs, flight numbers)
-- **v2.11.0** - Strict airport code validation (codes must be verified against email content)
 - **v2.10.0** - Marketing email filtering (ignores promotional emails from airlines/travel sites)
 - **v2.9.0** - City name recognition ("Boston to Las Vegas" → BOS, LAS), smart flight merging
-- **v2.8.6** - Fix duplicate detection for flights without confirmation codes
-- **v2.8.5** - Allow flight dates up to 10 years in the future
 - **v2.8.0** - Expanded to 75+ airlines/services (Brex, Ramp, regional airlines, travel agencies)
-- **v2.7.0** - Robust error handling, Windows compatibility, improved user messaging
-- **v2.6.0** - AOL optimization, comprehensive phase messaging
 - **v2.5.0** - Optimized IMAP searching (92% fewer queries), automatic fallback for all servers
-- **v2.4.0** - Comprehensive scan results display, same-day update handling
-- **v2.3.0** - Verbose progress output, IMAP rate limiting
 - **v2.2.0** - Added python-dateutil for robust date parsing, auto-installs dependencies
-- **v2.1.0** - Refactored to proper Python package structure
 - **v2.0.0** - Major rewrite with improved parsing and flight detection
 
 ## License
