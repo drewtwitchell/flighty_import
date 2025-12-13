@@ -233,7 +233,7 @@ AIRLINE_PATTERNS = [
     {
         "name": "Delta",
         "from_patterns": [r"delta", r"@.*delta\.com"],
-        "subject_patterns": [r"ereceipt", r"trip confirmation", r"itinerary", r"booking confirmation", r"confirmation"],
+        "subject_patterns": [r"ereceipt", r"receipt", r"trip confirmation", r"itinerary", r"booking confirmation", r"confirmation"],
     },
     {
         "name": "United",
@@ -341,7 +341,14 @@ AIRLINE_PATTERNS = [
 
 
 def is_flight_email(from_addr, subject):
-    """Check if email matches flight confirmation patterns.
+    """Check if email is from an airline and MIGHT contain flight information.
+
+    SIMPLIFIED APPROACH: If the email is from a known airline domain,
+    pass it through. The marketing filter and confirmation code extraction
+    will handle filtering out non-flight emails later.
+
+    This prevents losing valid flight emails that have unusual subjects
+    like "What to expect on your flight" or "Check in now".
 
     Args:
         from_addr: Email sender address
@@ -353,12 +360,83 @@ def is_flight_email(from_addr, subject):
     from_addr = (from_addr or "").lower()
     subject = (subject or "").lower()
 
-    for pattern in AIRLINE_PATTERNS:
-        from_match = any(re.search(p, from_addr, re.IGNORECASE) for p in pattern["from_patterns"])
-        subject_match = any(re.search(p, subject, re.IGNORECASE) for p in pattern["subject_patterns"])
+    # Known airline domains - if from any of these, it's likely flight-related
+    airline_domains = {
+        'jetblue': 'JetBlue',
+        'delta': 'Delta',
+        'united': 'United',
+        'aa.com': 'American Airlines',
+        'americanairlines': 'American Airlines',
+        'southwest': 'Southwest',
+        'alaskaair': 'Alaska Airlines',
+        'spirit': 'Spirit',
+        'flyfrontier': 'Frontier',
+        'hawaiianairlines': 'Hawaiian Airlines',
+        'aircanada': 'Air Canada',
+        'britishairways': 'British Airways',
+        'lufthansa': 'Lufthansa',
+        'emirates': 'Emirates',
+        'airfrance': 'Air France',
+        'klm': 'KLM',
+        'qantas': 'Qantas',
+        'singapore': 'Singapore Airlines',
+        'cathay': 'Cathay Pacific',
+        'westjet': 'WestJet',
+        'avianca': 'Avianca',
+        'aeromexico': 'Aeromexico',
+        'latam': 'LATAM',
+        'copa': 'Copa',
+        'turkish': 'Turkish Airlines',
+        'qatar': 'Qatar Airways',
+        'etihad': 'Etihad',
+        'icelandair': 'Icelandair',
+        'norwegian': 'Norwegian',
+        'ryanair': 'Ryanair',
+        'easyjet': 'easyJet',
+        'virgin': 'Virgin Atlantic',
+    }
 
-        if from_match and subject_match:
-            return True, pattern["name"]
+    # STEP 1: Check if from a known airline domain (most reliable)
+    for domain, airline_name in airline_domains.items():
+        if domain in from_addr:
+            # Exclude credit card/banking alerts that mention airlines
+            if 'barclays' in from_addr or 'chase' in from_addr or 'amex' in from_addr:
+                continue
+            return True, airline_name
+
+    # STEP 2: Check booking sites with subject filtering
+    # These send lots of marketing so we need subject keywords
+    booking_sites = ['expedia', 'kayak', 'priceline', 'orbitz', 'travelocity',
+                     'cheapoair', 'hopper', 'skyscanner', 'booking.com', 'trip.com']
+    booking_keywords = ['confirmation', 'itinerary', 'receipt', 'e-ticket',
+                        'trip details', 'booking', 'reservation']
+
+    for site in booking_sites:
+        if site in from_addr:
+            if any(kw in subject for kw in booking_keywords):
+                return True, "Booking Site"
+
+    # STEP 3: Check corporate travel tools
+    corporate_tools = ['concur', 'egencia', 'tripactions', 'navan', 'travelperk']
+    for tool in corporate_tools:
+        if tool in from_addr:
+            # Corporate tools usually send real bookings, not marketing
+            return True, "Corporate Travel"
+
+    # STEP 4: Generic catch-all - subject contains strong flight indicators
+    strong_indicators = [
+        'flight confirmation',
+        'e-ticket',
+        'eticket',
+        'boarding pass',
+        'check-in',
+        'checkin',
+        'your flight to',
+        'your trip to',
+    ]
+    for indicator in strong_indicators:
+        if indicator in subject:
+            return True, "Generic Flight"
 
     return False, None
 

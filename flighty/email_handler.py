@@ -17,12 +17,7 @@ from email.utils import parsedate_to_datetime
 logger = logging.getLogger(__name__)
 
 from .airports import VALID_AIRPORT_CODES
-from .parser import (
-    extract_confirmation_code,
-    extract_flight_info,
-    generate_content_hash,
-    create_flight_fingerprint
-)
+from .parser import extract_flight_info
 from .airlines import is_flight_email
 
 
@@ -295,33 +290,62 @@ def forward_email(config, msg, from_addr, subject, flight_info=None):
     # Build explicit flight data header to help Flighty parse correctly
     flight_data_header = ""
     if flight_info:
-        airports = flight_info.get("airports", [])
-        dates = flight_info.get("dates", [])
-        flight_nums = flight_info.get("flight_numbers", [])
+        segments = flight_info.get("segments", [])
+        confirmation = flight_info.get("confirmation", "")
 
-        # Filter to valid airports
-        valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
-
-        if valid_airports or dates or flight_nums:
+        # Use segments if available (new format), otherwise fall back to legacy
+        if segments:
             flight_data_header = "=" * 50 + "\n"
             flight_data_header += "FLIGHT INFORMATION\n"
             flight_data_header += "=" * 50 + "\n"
 
-            if valid_airports and len(valid_airports) >= 2:
-                flight_data_header += f"Route: {valid_airports[0]} to {valid_airports[1]}\n"
-            elif valid_airports:
-                flight_data_header += f"Airport: {valid_airports[0]}\n"
+            if confirmation:
+                flight_data_header += f"Confirmation: {confirmation}\n"
 
-            if flight_nums:
-                flight_data_header += f"Flight Number: {flight_nums[0]}\n"
+            for i, seg in enumerate(segments):
+                origin = seg.get("origin", "")
+                dest = seg.get("destination", "")
+                flight_num = seg.get("flight_number", "")
+                date = seg.get("date", "")
 
-            # Add dates with explicit years
-            if dates:
-                for i, date in enumerate(dates[:2]):  # Max 2 dates
-                    label = "Departure Date" if i == 0 else "Return Date"
-                    flight_data_header += f"{label}: {date}\n"
+                if len(segments) > 1:
+                    flight_data_header += f"\nFlight {i + 1}:\n"
+
+                if origin and dest:
+                    flight_data_header += f"Route: {origin} to {dest}\n"
+                if flight_num:
+                    flight_data_header += f"Flight Number: {flight_num}\n"
+                if date:
+                    flight_data_header += f"Date: {date}\n"
 
             flight_data_header += "=" * 50 + "\n\n"
+        else:
+            # Legacy format fallback
+            airports = flight_info.get("airports", [])
+            dates = flight_info.get("dates", [])
+            flight_nums = flight_info.get("flight_numbers", [])
+
+            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+            if valid_airports or dates or flight_nums:
+                flight_data_header = "=" * 50 + "\n"
+                flight_data_header += "FLIGHT INFORMATION\n"
+                flight_data_header += "=" * 50 + "\n"
+
+                if valid_airports and len(valid_airports) >= 2:
+                    flight_data_header += f"Route: {valid_airports[0]} to {valid_airports[1]}\n"
+                elif valid_airports:
+                    flight_data_header += f"Airport: {valid_airports[0]}\n"
+
+                if flight_nums:
+                    flight_data_header += f"Flight Number: {flight_nums[0]}\n"
+
+                if dates:
+                    for i, date in enumerate(dates[:2]):
+                        label = "Departure Date" if i == 0 else "Return Date"
+                        flight_data_header += f"{label}: {date}\n"
+
+                flight_data_header += "=" * 50 + "\n\n"
 
     forward_text = flight_data_header + f"""
 ---------- Forwarded message ---------
@@ -338,31 +362,59 @@ Subject: {subject}
     if html_body:
         html_header = ""
         if flight_info:
-            airports = flight_info.get("airports", [])
-            dates = flight_info.get("dates", [])
-            flight_nums = flight_info.get("flight_numbers", [])
-            valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+            segments = flight_info.get("segments", [])
+            confirmation = flight_info.get("confirmation", "")
 
-            if valid_airports or dates or flight_nums:
+            if segments:
                 # Use explicit colors that resist email client dark mode inversions
                 html_header = """<div style="background-color: #fff3cd !important; padding: 15px; margin-bottom: 20px; border: 2px solid #856404 !important; border-radius: 5px; font-family: Arial, sans-serif;">
 <h2 style="margin: 0 0 10px 0; color: #856404 !important; background-color: transparent !important;">✈️ FLIGHT INFORMATION</h2>
 <table style="font-size: 14px; color: #333 !important; background-color: transparent !important;">"""
 
-                if valid_airports and len(valid_airports) >= 2:
-                    html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Route:</strong></td><td style="color: #333 !important;">{valid_airports[0]} → {valid_airports[1]}</td></tr>'
-                elif valid_airports:
-                    html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Airport:</strong></td><td style="color: #333 !important;">{valid_airports[0]}</td></tr>'
+                if confirmation:
+                    html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Confirmation:</strong></td><td style="color: #333 !important;">{confirmation}</td></tr>'
 
-                if flight_nums:
-                    html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Flight Number:</strong></td><td style="color: #333 !important;">{flight_nums[0]}</td></tr>'
+                for i, seg in enumerate(segments):
+                    origin = seg.get("origin", "")
+                    dest = seg.get("destination", "")
+                    flight_num = seg.get("flight_number", "")
+                    date = seg.get("date", "")
 
-                if dates:
-                    for i, date in enumerate(dates[:2]):
-                        label = "Departure Date" if i == 0 else "Return Date"
-                        html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>{label}:</strong></td><td style="color: #333 !important;">{date}</td></tr>'
+                    if len(segments) > 1:
+                        html_header += f'<tr><td colspan="2" style="color: #856404 !important; padding: 10px 0 3px 0;"><strong>Flight {i + 1}:</strong></td></tr>'
+
+                    if origin and dest:
+                        html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Route:</strong></td><td style="color: #333 !important;">{origin} → {dest}</td></tr>'
+                    if flight_num:
+                        html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Flight Number:</strong></td><td style="color: #333 !important;">{flight_num}</td></tr>'
+                    if date:
+                        html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Date:</strong></td><td style="color: #333 !important;">{date}</td></tr>'
 
                 html_header += "</table></div>"
+            else:
+                # Legacy fallback
+                airports = flight_info.get("airports", [])
+                dates = flight_info.get("dates", [])
+                flight_nums = flight_info.get("flight_numbers", [])
+                valid_airports = [code for code in airports if code in VALID_AIRPORT_CODES]
+
+                if valid_airports or dates or flight_nums:
+                    html_header = """<div style="background-color: #fff3cd !important; padding: 15px; margin-bottom: 20px; border: 2px solid #856404 !important; border-radius: 5px; font-family: Arial, sans-serif;">
+<h2 style="margin: 0 0 10px 0; color: #856404 !important; background-color: transparent !important;">✈️ FLIGHT INFORMATION</h2>
+<table style="font-size: 14px; color: #333 !important; background-color: transparent !important;">"""
+
+                    if valid_airports and len(valid_airports) >= 2:
+                        html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Route:</strong></td><td style="color: #333 !important;">{valid_airports[0]} → {valid_airports[1]}</td></tr>'
+
+                    if flight_nums:
+                        html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>Flight Number:</strong></td><td style="color: #333 !important;">{flight_nums[0]}</td></tr>'
+
+                    if dates:
+                        for i, date in enumerate(dates[:2]):
+                            label = "Departure Date" if i == 0 else "Return Date"
+                            html_header += f'<tr><td style="color: #333 !important; padding: 3px 10px 3px 0;"><strong>{label}:</strong></td><td style="color: #333 !important;">{date}</td></tr>'
+
+                    html_header += "</table></div>"
 
         # Inject at the start of the HTML body
         if "<body" in html_body.lower():
