@@ -21,6 +21,7 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 - **Smart flight merging** - Groups related emails by confirmation code or route+date
 - **Original email forwarding** - Forwards the actual airline emails to Flighty (no modifications)
 - **PDF summary generation** - Creates a PDF report of all flights grouped by month in `raw/` directory
+- **Separate SMTP support** - Read from one email (e.g., AOL), send through another (e.g., Gmail)
 
 ## How It Works
 
@@ -248,6 +249,12 @@ flighty_import/
 - The script automatically waits and retries (up to 5 minutes)
 - Large batches (50+ flights) may take 10-30 minutes - this is normal
 
+**AOL "suspicious activity" (475 error)**
+- AOL aggressively blocks programmatic email sending
+- Solution: Use a different email for sending (e.g., Gmail)
+- Run `python3 run.py --setup` and choose "Yes" when asked about separate sending account
+- This lets you read emails from AOL but send through Gmail or another provider
+
 **Want to re-import everything**
 - Run `python3 run.py --reset` to clear history
 - Then run `python3 run.py` to import all flights fresh
@@ -275,6 +282,7 @@ crontab -e
 
 ## Version History
 
+- **v2.52.0** - Separate SMTP support: read from one email (e.g., AOL) and send through another (e.g., Gmail) to avoid provider blocks
 - **v2.51.0** - Auto-install reportlab for PDF generation, generate comprehensive PDF of all flights (new + already imported) upfront, improved error handling for failed sends
 - **v2.50.0** - Original email forwarding: sends actual airline emails to Flighty (no modifications), adds PDF summary generation grouped by month
 - **v2.49.0** - Clean email generation: creates simple emails with just flight data instead of forwarding messy airline emails

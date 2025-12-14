@@ -127,7 +127,7 @@ def run_setup():
     print("Your flight confirmation emails will be forwarded to Flighty")
     print("so they automatically appear in your Flighty app.")
 
-    total_steps = 6
+    total_steps = 7
     config = {}
 
     # Step 1: Email Provider
@@ -224,8 +224,54 @@ def run_setup():
 
     print(f"\n  Will search emails from the last {config['days_back']} days")
 
-    # Step 6: Additional Options
-    print_step(6, total_steps, "Additional Options")
+    # Step 6: Separate SMTP Server (optional)
+    print_step(6, total_steps, "Sending Email Configuration")
+
+    print("Some email providers (like AOL) may block sending from scripts.")
+    print("You can use a different email account for sending if needed.")
+    print("(e.g., read from AOL, send through Gmail)\n")
+
+    use_separate_smtp = get_yes_no(
+        "Use a different email account for sending?",
+        default="n"
+    )
+
+    if use_separate_smtp:
+        print("\nSelect provider for SENDING emails:\n")
+        for key, prov in EMAIL_PROVIDERS.items():
+            print(f"  {key}. {prov['name']}")
+
+        print()
+        while True:
+            smtp_choice = input("Enter your choice (1-6): ").strip()
+            if smtp_choice in EMAIL_PROVIDERS:
+                break
+            print("  Please enter a number between 1 and 6")
+
+        smtp_provider = EMAIL_PROVIDERS[smtp_choice]
+        print(f"\n  Selected: {smtp_provider['name']}")
+
+        if smtp_provider["help"]:
+            print(f"\n  Note: {smtp_provider['help']}")
+
+        # Set SMTP server info
+        if smtp_choice == "6":  # Custom
+            print("\nEnter your SMTP server details:")
+            config["smtp_server"] = get_input("SMTP server (e.g., smtp.example.com)")
+            config["smtp_port"] = get_number("SMTP port", 587)
+        else:
+            config["smtp_server"] = smtp_provider["smtp_server"]
+            config["smtp_port"] = smtp_provider["smtp_port"]
+
+        print()
+        config["smtp_email"] = get_input("Sending email address")
+        config["smtp_password"] = get_input("Sending App Password (input hidden)", password=True)
+    else:
+        config["smtp_email"] = None
+        config["smtp_password"] = None
+
+    # Step 7: Additional Options
+    print_step(7, total_steps, "Additional Options")
 
     config["mark_as_read"] = get_yes_no(
         "Mark emails as read after forwarding?",
@@ -242,6 +288,8 @@ def run_setup():
     print(f"  Password:       {'*' * 16}")
     print(f"  IMAP Server:    {config['imap_server']}:{config['imap_port']}")
     print(f"  SMTP Server:    {config['smtp_server']}:{config['smtp_port']}")
+    if config.get('smtp_email'):
+        print(f"  Send via:       {config['smtp_email']} (different from read account)")
     print(f"  Forward to:     {config['flighty_email']}")
     print(f"  Folders:        {', '.join(config['check_folders'])}")
     print(f"  Days back:      {config['days_back']}")
