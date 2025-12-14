@@ -34,6 +34,7 @@ from flighty.airports import VALID_AIRPORT_CODES, get_airport_display
 from flighty.email_handler import connect_imap, forward_email
 from flighty.scanner import scan_for_flights, select_latest_flights
 from flighty.setup import run_setup
+from flighty.pdf_report import generate_pdf_report
 # Note: deps.py auto-installs python-dateutil when parser.py first needs it
 
 # Constants
@@ -338,24 +339,28 @@ def display_scan_results(to_forward, skipped, duplicates_merged, processed):
         print()
         print("  ┌─ WHAT WILL BE SENT TO FLIGHTY ─────────────────────────────")
         print("  │")
-        print("  │  Each email will be forwarded with an injected header like:")
-        print("  │")
-        print("  │    ══════════════════════════════════════════")
-        print("  │    FLIGHT INFORMATION")
-        print("  │    ══════════════════════════════════════════")
-        print("  │    Route: JFK → LAX")
-        print("  │    Flight Number: AA123")
-        print("  │    Departure Date: 2025-03-15")
-        print("  │    ══════════════════════════════════════════")
-        print("  │")
-        print("  │  This helps Flighty correctly parse the flight details.")
+        print("  │  The original airline emails will be forwarded to Flighty.")
+        print("  │  A PDF summary will also be saved to the raw/ directory.")
         print("  │")
         print("  └" + "─" * 55)
         print()
 
 
 def forward_flights(config, to_forward, processed, dry_run):
-    """Forward flights to Flighty."""
+    """Forward flights to Flighty and generate PDF summary."""
+    # Always generate PDF summary to raw directory
+    if to_forward:
+        raw_dir = SCRIPT_DIR / "raw"
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = raw_dir / f"flight_summary_{timestamp}.pdf"
+
+        print()
+        print("  Generating flight summary PDF...")
+        result_path = generate_pdf_report(to_forward, pdf_path, "Flight Summary")
+        if result_path:
+            print(f"  PDF saved to: {result_path}")
+        print()
+
     if not to_forward:
         print()
         print("  No new flights to forward - all caught up!")
@@ -450,8 +455,11 @@ def forward_flights(config, to_forward, processed, dry_run):
                 date = dates[0] if dates else ""
                 flight_num = flights_list[0] if flights_list else ""
 
-                print(f"  ┌─ Flight {flight_num_counter} of {len(to_forward)} ─────────────────────────────────────")
-                print(f"  │  Confirmation: {conf}")
+                print(f"  ┌─ Email {flight_num_counter} of {len(to_forward)} ─────────────────────────────────────")
+                print(f"  │  From:         {flight.get('from_addr', '')[:50]}")
+                print(f"  │  Subject:      {flight.get('subject', '')[:50]}")
+                if conf != "------":
+                    print(f"  │  Confirmation: {conf}")
                 if route:
                     print(f"  │  Route:        {route}")
                 if flight_num:
@@ -461,7 +469,7 @@ def forward_flights(config, to_forward, processed, dry_run):
                 if email_date:
                     print(f"  │  Email Date:   {email_date.strftime('%Y-%m-%d %H:%M') if hasattr(email_date, 'strftime') else email_date}")
                 if email_count > 1:
-                    print(f"  │  Merged {email_count} emails - using most recent")
+                    print(f"  │  ({email_count} emails found - using most recent)")
                 if flight.get("is_update"):
                     print(f"  │  UPDATE: Flight details changed since last import")
                 print(f"  └────────────────────────────────────────────────────────────")
@@ -472,8 +480,8 @@ def forward_flights(config, to_forward, processed, dry_run):
         print("  ✓ Dry run complete!")
         print()
         print("  What happens next if you run without --dry-run:")
-        print("    1. Each email above will be forwarded to Flighty")
-        print("    2. A header with route/date/flight info will be added")
+        print("    1. The original airline emails will be forwarded to Flighty")
+        print("    2. A PDF summary will be saved to the raw/ directory")
         print("    3. Progress is saved after each successful send")
         print("    4. If rate-limited, we'll wait and retry automatically")
         print()
@@ -514,19 +522,19 @@ def forward_flights(config, to_forward, processed, dry_run):
         date = dates[0] if dates else ""
         flight_num = flights_list[0] if flights_list else ""
 
-        # Show what we're sending
+        # Show what email we're sending
         print()
-        print(f"  [{i+1}/{len(to_forward)}] Forwarding {conf}...")
-        if route or flight_num or date:
-            print(f"        Header: ", end="")
-            header_parts = []
-            if route:
-                header_parts.append(route)
-            if flight_num:
-                header_parts.append(flight_num)
-            if date:
-                header_parts.append(date)
-            print(" | ".join(header_parts))
+        print(f"  [{i+1}/{len(to_forward)}] Sending original email to Flighty:")
+        print(f"        From:    {flight['from_addr'][:60]}")
+        print(f"        Subject: {flight['subject'][:60]}")
+        if conf != "------":
+            print(f"        Conf:    {conf}")
+        if route:
+            print(f"        Route:   {route}")
+        if flight_num:
+            print(f"        Flight:  {flight_num}")
+        if date:
+            print(f"        Date:    {date}")
 
         success = forward_email(
             config,

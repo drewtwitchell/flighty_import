@@ -19,7 +19,8 @@ Automatically find flight booking confirmation emails in your inbox and forward 
 - **City name recognition** - Understands "Boston to Las Vegas" and converts to airport codes
 - **Marketing email filtering** - Automatically ignores promotional emails from airlines
 - **Smart flight merging** - Groups related emails by confirmation code or route+date
-- **Clean email generation** - Creates simple, clean emails for Flighty instead of forwarding messy originals
+- **Original email forwarding** - Forwards the actual airline emails to Flighty (no modifications)
+- **PDF summary generation** - Creates a PDF report of all flights grouped by month in `raw/` directory
 
 ## How It Works
 
@@ -148,10 +149,10 @@ python3 run.py --dry-run
 ```
 
 This shows you:
-- All flights that would be forwarded
-- The header information that will be injected (route, flight number, date)
+- All emails that would be forwarded (with From, Subject, and flight details)
 - Flights already in Flighty
 - Duplicate emails that were merged
+- A PDF summary is also generated in the `raw/` directory
 
 ### Normal Mode
 
@@ -203,7 +204,9 @@ flighty_import/
 │   ├── parser.py           # Flight info extraction (uses dateutil)
 │   ├── email_handler.py    # IMAP/SMTP handling with retry logic
 │   ├── scanner.py          # Optimized email scanning
+│   ├── pdf_report.py       # PDF summary generation
 │   └── setup.py            # Setup wizard
+├── raw/                    # PDF summaries saved here (auto-created)
 ├── airport_codes.txt       # 9,800+ IATA airport codes
 ├── pyproject.toml          # Python packaging config
 ├── VERSION                 # Version number
@@ -272,6 +275,7 @@ crontab -e
 
 ## Version History
 
+- **v2.50.0** - Original email forwarding: sends actual airline emails to Flighty (no modifications), adds PDF summary generation grouped by month
 - **v2.49.0** - Clean email generation: creates simple emails with just flight data instead of forwarding messy airline emails
 - **v2.48.0** - Multi-airline support: Added Delta email format, Cape Air codeshare patterns, removed dead code
 - **v2.27.1** - Fix datetime comparison error in sorting

@@ -10,15 +10,9 @@ import email.header
 import re
 import time
 from datetime import datetime, timedelta
-from email.mime.multipart import MIMEMultipart
-from email.mime.text import MIMEText
 from email.utils import parsedate_to_datetime
 
 logger = logging.getLogger(__name__)
-
-from .airports import VALID_AIRPORT_CODES
-from .parser import extract_flight_info
-from .airlines import is_flight_email
 
 
 def decode_header_value(value):
@@ -265,144 +259,23 @@ def connect_imap(config):
 
 
 def forward_email(config, msg, from_addr, subject, flight_info=None):
-    """Send a clean flight confirmation email to Flighty.
+    """Forward the original airline email to Flighty.
 
-    Creates a new, simple email with just the flight data instead of
-    forwarding the messy original airline email.
+    Sends the original email exactly as received from the airline,
+    just changing the To address to Flighty.
 
     Args:
         config: Config dict with smtp settings and flighty_email
-        msg: Original email message object (kept for compatibility, not used)
-        from_addr: Original sender address (kept for compatibility, not used)
-        subject: Original subject line (kept for compatibility, not used)
-        flight_info: Extracted flight info dict
+        msg: Original email message object to forward
+        from_addr: Original sender address (for logging)
+        subject: Original subject line (for logging)
+        flight_info: Extracted flight info dict (for logging only)
 
     Returns:
         True if sent successfully, False otherwise
     """
-    from .airports import get_airport_display
-
-    # Extract flight details
-    segments = flight_info.get("segments", []) if flight_info else []
-    confirmation = flight_info.get("confirmation", "") if flight_info else ""
-
-    # Determine airline from flight number
-    airline = "Unknown Airline"
-    if segments and segments[0].get("flight_number"):
-        fn = segments[0]["flight_number"]
-        if fn.startswith("B6"):
-            airline = "JetBlue"
-        elif fn.startswith("DL"):
-            airline = "Delta"
-        elif fn.startswith("AA"):
-            airline = "American Airlines"
-        elif fn.startswith("UA"):
-            airline = "United Airlines"
-        elif fn.startswith("WN"):
-            airline = "Southwest Airlines"
-        elif fn.startswith("AS"):
-            airline = "Alaska Airlines"
-        elif fn.startswith("NK"):
-            airline = "Spirit Airlines"
-        elif fn.startswith("F9"):
-            airline = "Frontier Airlines"
-
-    # Create subject line
-    if confirmation:
-        email_subject = f"Flight Confirmation {confirmation}"
-    elif segments:
-        origin = segments[0].get("origin", "")
-        dest = segments[0].get("destination", "")
-        email_subject = f"Flight Confirmation {origin} to {dest}"
-    else:
-        email_subject = "Flight Confirmation"
-
-    # Build plain text body
-    text_body = ""
-
-    if confirmation:
-        text_body += f"Confirmation Code: {confirmation}\n"
-    text_body += f"Airline: {airline}\n"
-    text_body += "\n"
-
-    for i, seg in enumerate(segments):
-        origin = seg.get("origin", "")
-        dest = seg.get("destination", "")
-        flight_num = seg.get("flight_number", "")
-        date = seg.get("date", "")
-
-        origin_display = get_airport_display(origin) if origin else ""
-        dest_display = get_airport_display(dest) if dest else ""
-
-        if len(segments) > 1:
-            text_body += f"Flight {i + 1}:\n"
-
-        if flight_num:
-            text_body += f"  Flight: {flight_num}\n"
-        if origin_display:
-            text_body += f"  From: {origin_display}\n"
-        if dest_display:
-            text_body += f"  To: {dest_display}\n"
-        if date:
-            text_body += f"  Date: {date}\n"
-
-        text_body += "\n"
-
-    # Build HTML body
-    html_body = f"""<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="utf-8">
-    <title>{email_subject}</title>
-</head>
-<body style="font-family: Arial, sans-serif; max-width: 600px; margin: 0 auto; padding: 20px;">
-    <div style="background-color: #f8f9fa; border-radius: 8px; padding: 20px; margin-bottom: 20px;">
-        <h1 style="color: #333; margin: 0 0 10px 0; font-size: 24px;">Flight Confirmation</h1>
-"""
-
-    if confirmation:
-        html_body += f'        <p style="font-size: 18px; margin: 5px 0;"><strong>Confirmation:</strong> <span style="font-family: monospace; font-size: 20px; color: #0066cc;">{confirmation}</span></p>\n'
-
-    html_body += f'        <p style="font-size: 14px; color: #666; margin: 5px 0;">{airline}</p>\n'
-    html_body += '    </div>\n\n'
-
-    for i, seg in enumerate(segments):
-        origin = seg.get("origin", "")
-        dest = seg.get("destination", "")
-        flight_num = seg.get("flight_number", "")
-        date = seg.get("date", "")
-
-        origin_display = get_airport_display(origin) if origin else ""
-        dest_display = get_airport_display(dest) if dest else ""
-
-        html_body += '    <div style="background-color: #fff; border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 15px;">\n'
-
-        if len(segments) > 1:
-            html_body += f'        <h2 style="color: #333; margin: 0 0 10px 0; font-size: 16px;">Flight {i + 1}</h2>\n'
-
-        if flight_num:
-            html_body += f'        <p style="margin: 5px 0;"><strong>Flight:</strong> {flight_num}</p>\n'
-        if origin_display:
-            html_body += f'        <p style="margin: 5px 0;"><strong>From:</strong> {origin_display}</p>\n'
-        if dest_display:
-            html_body += f'        <p style="margin: 5px 0;"><strong>To:</strong> {dest_display}</p>\n'
-        if date:
-            html_body += f'        <p style="margin: 5px 0;"><strong>Date:</strong> {date}</p>\n'
-
-        html_body += '    </div>\n\n'
-
-    html_body += """</body>
-</html>"""
-
-    # Create the email message
-    flight_msg = MIMEMultipart('alternative')
-    flight_msg['From'] = config['email']
-    flight_msg['To'] = config['flighty_email']
-    flight_msg['Subject'] = email_subject
-
-    # Attach both plain text and HTML versions
-    flight_msg.attach(MIMEText(text_body, 'plain'))
-    flight_msg.attach(MIMEText(html_body, 'html'))
+    # Send the original message directly - just need to specify the recipient
+    # The original message headers are preserved
 
     # Retry with increasing delays until it works
     retry_delays = [10, 30, 60, 120, 180, 300]  # Up to 5 minutes wait
@@ -413,7 +286,10 @@ def forward_email(config, msg, from_addr, subject, flight_info=None):
             with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=60) as server:
                 server.starttls()
                 server.login(config['email'], config['password'])
-                server.send_message(flight_msg)
+                # Send the original message directly to Flighty
+                # Use sendmail with explicit from/to to override headers
+                msg_bytes = msg.as_bytes()
+                server.sendmail(config['email'], config['flighty_email'], msg_bytes)
             return True  # Success
         except Exception as e:
             error_msg = str(e).lower()
