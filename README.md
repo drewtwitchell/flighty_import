@@ -275,6 +275,7 @@ crontab -e
 
 ## Version History
 
+- **v2.51.0** - Auto-install reportlab for PDF generation, generate comprehensive PDF of all flights (new + already imported) upfront, improved error handling for failed sends
 - **v2.50.0** - Original email forwarding: sends actual airline emails to Flighty (no modifications), adds PDF summary generation grouped by month
 - **v2.49.0** - Clean email generation: creates simple emails with just flight data instead of forwarding messy airline emails
 - **v2.48.0** - Multi-airline support: Added Delta email format, Cape Air codeshare patterns, removed dead code

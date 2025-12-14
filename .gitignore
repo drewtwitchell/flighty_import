@@ -39,6 +39,9 @@ env/
 .LSOverride
 ._*
 
+# Generated output
+raw/
+
 # Logs
 *.log
 forwarder.log

@@ -8,16 +8,17 @@ import re
 from datetime import datetime
 from pathlib import Path
 
-# PDF generation uses reportlab if available, otherwise falls back to text
-try:
+from .deps import ensure_reportlab
+
+# Auto-install reportlab if needed
+HAS_REPORTLAB = ensure_reportlab()
+
+if HAS_REPORTLAB:
     from reportlab.lib import colors
     from reportlab.lib.pagesizes import letter
     from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
     from reportlab.lib.units import inch
     from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
-    HAS_REPORTLAB = True
-except ImportError:
-    HAS_REPORTLAB = False
 
 
 def parse_month_year(date_str):
@@ -102,15 +103,24 @@ def generate_pdf_report(flights, output_path, title="Flight Summary"):
     """
     from .airports import get_airport_display, VALID_AIRPORT_CODES
 
+    if not flights:
+        print("      No flights to include in PDF")
+        return None
+
     output_path = Path(output_path)
     output_path.parent.mkdir(parents=True, exist_ok=True)
 
     if not HAS_REPORTLAB:
         # Fall back to text report
+        print("      (reportlab not available, generating text file instead)")
         return generate_text_report(flights, output_path.with_suffix('.txt'), title)
 
     # Group flights by month
     flights_by_month = group_flights_by_month(flights)
+
+    if not flights_by_month:
+        print("      No flights grouped by month")
+        return None
 
     # Create PDF
     doc = SimpleDocTemplate(

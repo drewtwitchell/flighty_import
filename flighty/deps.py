@@ -6,6 +6,57 @@ import subprocess
 import sys
 
 
+def ensure_reportlab():
+    """Ensure reportlab is installed for PDF generation.
+
+    Returns:
+        True if reportlab is available, False otherwise
+    """
+    try:
+        import reportlab
+        return True
+    except ImportError:
+        print()
+        print("  ┌─────────────────────────────────────────────────────────┐")
+        print("  │  INSTALLING PDF GENERATION DEPENDENCY                   │")
+        print("  └─────────────────────────────────────────────────────────┘")
+        print()
+        print("  The 'reportlab' package is required for PDF generation.")
+        print("  This is a one-time installation.")
+        print()
+        print("  Installing reportlab...", end="", flush=True)
+
+        try:
+            result = subprocess.run(
+                [sys.executable, "-m", "pip", "install", "reportlab", "--quiet"],
+                capture_output=True,
+                text=True,
+                timeout=120
+            )
+
+            if result.returncode == 0:
+                print(" done!")
+                print()
+                return True
+            else:
+                print(" failed!")
+                print()
+                print(f"  Error: {result.stderr[:200] if result.stderr else 'Unknown error'}")
+                print("  PDF generation will fall back to text format.")
+                print()
+                return False
+
+        except subprocess.TimeoutExpired:
+            print(" timed out!")
+            print("  PDF generation will fall back to text format.")
+            return False
+
+        except Exception as e:
+            print(f" failed: {e}")
+            print("  PDF generation will fall back to text format.")
+            return False
+
+
 def ensure_dateutil():
     """Ensure python-dateutil is installed, auto-install if missing.
 

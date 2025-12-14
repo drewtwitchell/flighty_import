@@ -340,27 +340,13 @@ def display_scan_results(to_forward, skipped, duplicates_merged, processed):
         print("  ┌─ WHAT WILL BE SENT TO FLIGHTY ─────────────────────────────")
         print("  │")
         print("  │  The original airline emails will be forwarded to Flighty.")
-        print("  │  A PDF summary will also be saved to the raw/ directory.")
         print("  │")
         print("  └" + "─" * 55)
         print()
 
 
 def forward_flights(config, to_forward, processed, dry_run):
-    """Forward flights to Flighty and generate PDF summary."""
-    # Always generate PDF summary to raw directory
-    if to_forward:
-        raw_dir = SCRIPT_DIR / "raw"
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        pdf_path = raw_dir / f"flight_summary_{timestamp}.pdf"
-
-        print()
-        print("  Generating flight summary PDF...")
-        result_path = generate_pdf_report(to_forward, pdf_path, "Flight Summary")
-        if result_path:
-            print(f"  PDF saved to: {result_path}")
-        print()
-
+    """Forward flights to Flighty."""
     if not to_forward:
         print()
         print("  No new flights to forward - all caught up!")
@@ -481,9 +467,8 @@ def forward_flights(config, to_forward, processed, dry_run):
         print()
         print("  What happens next if you run without --dry-run:")
         print("    1. The original airline emails will be forwarded to Flighty")
-        print("    2. A PDF summary will be saved to the raw/ directory")
-        print("    3. Progress is saved after each successful send")
-        print("    4. If rate-limited, we'll wait and retry automatically")
+        print("    2. Progress is saved after each successful send")
+        print("    3. If rate-limited, we'll wait and retry automatically")
         print()
         print("  Ready to import? Run: python3 run.py")
         print()
@@ -554,13 +539,36 @@ def forward_flights(config, to_forward, processed, dry_run):
                 "imported_at": datetime.now().isoformat(),
                 "fingerprint": flight.get("fingerprint", ""),
                 "route": route,
-                "date": date
+                "date": date,
+                "flight_number": flight_num
             }
             processed["content_hashes"].add(flight["content_hash"])
             save_processed_flights(processed)
         else:
-            print(f"        ✗ Failed to send")
             failed += 1
+
+            # If the FIRST email fails after all retries, exit gracefully
+            # This indicates a systemic issue (rate limiting, auth problem, etc.)
+            if i == 0:
+                print()
+                print("  ╔════════════════════════════════════════════════════════════╗")
+                print("  ║  UNABLE TO SEND EMAILS                                     ║")
+                print("  ╚════════════════════════════════════════════════════════════╝")
+                print()
+                print("  The first email failed after all retry attempts.")
+                print("  This usually means:")
+                print()
+                print("    • Your email provider is rate limiting you")
+                print("    • There's a temporary server issue")
+                print("    • Your SMTP settings or credentials need updating")
+                print()
+                print("  What to do:")
+                print("    1. Wait 15-30 minutes and try again")
+                print("    2. If it keeps failing, run: python3 run.py --setup")
+                print()
+                print("  Your flight data has been saved to the PDF in the raw/ folder.")
+                print()
+                return
 
     print()
     print("  ─" * 35)
@@ -636,6 +644,52 @@ def run(dry_run=False, days_override=None):
 
     # Select latest emails per confirmation (handles same-day updates)
     to_forward, skipped, duplicates_merged = select_latest_flights(all_flights, processed)
+
+    # Generate PDF summary of ALL flights immediately (new + already imported)
+    all_scanned_flights = list(to_forward)  # Start with new flights
+
+    # Add already-imported flights from processed data
+    already_in_flighty = processed.get("confirmations", {})
+    for conf, data in already_in_flighty.items():
+        route_str = data.get("route", "")
+        if " → " in route_str:
+            route_parts = route_str.split(" → ")
+            route_tuple = tuple(route_parts[:2])
+            airports = route_parts[:2]
+        else:
+            route_tuple = None
+            airports = []
+
+        all_scanned_flights.append({
+            "confirmation": conf,
+            "flight_info": {
+                "route": route_tuple,
+                "airports": airports,
+                "dates": [data.get("date")] if data.get("date") else [],
+                "flight_numbers": [data.get("flight_number")] if data.get("flight_number") else []
+            }
+        })
+
+    # Generate PDF for all flights
+    if all_scanned_flights:
+        raw_dir = SCRIPT_DIR / "raw"
+        raw_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        pdf_path = raw_dir / f"all_flights_{timestamp}.pdf"
+
+        print()
+        print("  Generating PDF summary of ALL flights...")
+        result_path = generate_pdf_report(all_scanned_flights, pdf_path, "All Flights Summary")
+        if result_path:
+            print(f"  ✓ PDF saved to: {result_path}")
+            print(f"    Contains {len(all_scanned_flights)} flights ({len(to_forward)} new, {len(already_in_flighty)} already imported)")
+        else:
+            print("  ✗ Failed to generate PDF")
+        print()
+    else:
+        print()
+        print("  No flights found to generate PDF.")
+        print()
 
     # Display comprehensive scan results
     display_scan_results(to_forward, skipped, duplicates_merged, processed)
