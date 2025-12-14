@@ -277,10 +277,6 @@ def forward_email(config, msg, from_addr, subject, flight_info=None):
     # Send the original message directly - just need to specify the recipient
     # The original message headers are preserved
 
-    # Use separate SMTP credentials if configured, otherwise fall back to IMAP credentials
-    smtp_email = config.get('smtp_email') or config['email']
-    smtp_password = config.get('smtp_password') or config['password']
-
     # Retry with increasing delays until it works
     retry_delays = [10, 30, 60, 120, 180, 300]  # Up to 5 minutes wait
     max_attempts = len(retry_delays) + 1
@@ -289,11 +285,11 @@ def forward_email(config, msg, from_addr, subject, flight_info=None):
         try:
             with smtplib.SMTP(config['smtp_server'], config['smtp_port'], timeout=60) as server:
                 server.starttls()
-                server.login(smtp_email, smtp_password)
+                server.login(config['email'], config['password'])
                 # Send the original message directly to Flighty
                 # Use sendmail with explicit from/to to override headers
                 msg_bytes = msg.as_bytes()
-                server.sendmail(smtp_email, config['flighty_email'], msg_bytes)
+                server.sendmail(config['email'], config['flighty_email'], msg_bytes)
             return True  # Success
         except Exception as e:
             error_msg = str(e).lower()

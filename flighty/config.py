@@ -99,9 +99,6 @@ def load_config(config_file=None):
             config.setdefault('flighty_email', DEFAULT_FLIGHTY_EMAIL)
             config.setdefault('imap_port', 993)
             config.setdefault('smtp_port', 587)
-            # Separate SMTP credentials (optional - falls back to IMAP credentials)
-            config.setdefault('smtp_email', None)
-            config.setdefault('smtp_password', None)
             return config
 
     except json.JSONDecodeError as e:
