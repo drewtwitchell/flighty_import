@@ -321,11 +321,31 @@ def normalize_datetime(dt):
     return dt
 
 
+def normalize_flight_number(fn):
+    """Normalize flight numbers to handle variations.
+
+    JetBlue check-in emails use B60xxx format, bookings use B6xxx.
+    """
+    import re
+    if not fn:
+        return fn
+
+    # JetBlue: B60xxx -> B6xxx (remove extra 0 after B6)
+    match = re.match(r'^B60(\d{3,4})$', fn)
+    if match:
+        return f"B6{match.group(1)}"
+
+    return fn
+
+
 def deduplicate_flights(flights):
     """Deduplicate flights by confirmation code, extracting all unique segments.
 
-    A round-trip booking (same confirmation) with BOS->MCO and MCO->BOS
-    will produce 2 separate flight entries.
+    Handles:
+    - Round-trip bookings: BOS->MCO and MCO->BOS as 2 separate flights
+    - Same-day switches: keeps most recent flight number for route+date
+    - Cancellations: excludes cancelled bookings entirely
+    - Flight number normalization: B60xxx -> B6xxx
     """
     from collections import defaultdict
 
@@ -343,9 +363,18 @@ def deduplicate_flights(flights):
     result = []
 
     for conf, conf_flights in by_conf.items():
-        # Collect all unique segments from all emails with this confirmation
-        # Key: (route, date) to deduplicate same segment from multiple emails
-        segments = {}
+        # Check if this booking was cancelled
+        is_cancelled = any(
+            f.get("flight_info", {}).get("email_type") == "cancellation"
+            for f in conf_flights
+        )
+        if is_cancelled:
+            # Skip cancelled bookings entirely
+            continue
+
+        # Collect all segments, tracking email date for same-day switch handling
+        # Key: (route, date) -> list of (email_date, flight_number)
+        segments = defaultdict(list)
         best_email = None
         best_date = datetime.min
 
@@ -362,32 +391,37 @@ def deduplicate_flights(flights):
             flight_numbers = fi.get("flight_numbers", [])
 
             if route and dates:
-                # Single segment with specific date
+                # For each date in this email
                 for i, date in enumerate(dates):
-                    # Try to get corresponding flight number
+                    # Get flight number, normalize it
                     fn = flight_numbers[i] if i < len(flight_numbers) else (flight_numbers[0] if flight_numbers else "")
+                    fn = normalize_flight_number(fn)
 
-                    # Create segment key
+                    # Track this segment with its email date (for switch handling)
                     seg_key = (route, date)
-                    if seg_key not in segments:
-                        segments[seg_key] = {
-                            "route": route,
-                            "date": date,
-                            "flight_number": fn
-                        }
+                    segments[seg_key].append({
+                        "email_date": email_date,
+                        "flight_number": fn
+                    })
             elif route:
-                # Route without specific date - use email date
+                # Route without specific date
+                fn = normalize_flight_number(flight_numbers[0] if flight_numbers else "")
                 seg_key = (route, str(email_date.date()) if email_date != datetime.min else "")
-                if seg_key not in segments:
-                    segments[seg_key] = {
-                        "route": route,
-                        "date": "",
-                        "flight_number": flight_numbers[0] if flight_numbers else ""
-                    }
+                segments[seg_key].append({
+                    "email_date": email_date,
+                    "flight_number": fn
+                })
 
         if segments:
-            # Create one result entry per segment
-            for seg_key, seg_data in segments.items():
+            # Create one result entry per unique segment
+            # For same-day switches, use the most recent email's flight number
+            for seg_key, seg_entries in segments.items():
+                route, date = seg_key
+
+                # Sort by email date and take the most recent flight number
+                seg_entries.sort(key=lambda x: x["email_date"], reverse=True)
+                final_fn = seg_entries[0]["flight_number"]
+
                 flight_entry = {
                     "confirmation": conf,
                     "email_date": best_email.get("email_date") if best_email else None,
@@ -396,10 +430,10 @@ def deduplicate_flights(flights):
                     "airline": best_email.get("airline", "") if best_email else "",
                     "flight_info": {
                         "confirmation": conf,
-                        "route": seg_data["route"],
-                        "dates": [seg_data["date"]] if seg_data["date"] else [],
-                        "flight_numbers": [seg_data["flight_number"]] if seg_data["flight_number"] else [],
-                        "airports": list(seg_data["route"]) if seg_data["route"] else [],
+                        "route": route,
+                        "dates": [date] if date else [],
+                        "flight_numbers": [final_fn] if final_fn else [],
+                        "airports": list(route) if route else [],
                         "email_type": "booking"
                     }
                 }
