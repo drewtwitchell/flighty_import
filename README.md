@@ -302,6 +302,7 @@ crontab -e
 
 ## Version History
 
+- **v2.55.0** - Complete flight data extraction with inference: Multiple JetBlue email format patterns, segment-based route extraction, smart deduplication (segment > booking > check-in), and flight number inference based on JetBlue's consistent route patterns for older flights without booking emails
 - **v2.54.0** - Improved flight number extraction: merges flight numbers from booking emails when check-in emails don't have them, shows "---" for unavailable flight numbers in PDF reports
 - **v2.53.0** - POP3 full mailbox scanner for AOL accounts (bypasses IMAP 10k message limit), automatic IMAP limitation detection, `--full-scan` option, resumable scanning with progress saving, PDF reports grouped by year/month/day
 - **v2.51.0** - Auto-install reportlab for PDF generation, generate comprehensive PDF of all flights (new + already imported) upfront, improved error handling for failed sends
