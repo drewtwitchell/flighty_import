@@ -322,25 +322,94 @@ def normalize_datetime(dt):
 
 
 def deduplicate_flights(flights):
-    """Deduplicate flights by confirmation code, keeping most recent."""
-    by_conf = {}
+    """Deduplicate flights by confirmation code, extracting all unique segments.
+
+    A round-trip booking (same confirmation) with BOS->MCO and MCO->BOS
+    will produce 2 separate flight entries.
+    """
+    from collections import defaultdict
+
+    # Group all emails by confirmation code
+    by_conf = defaultdict(list)
     no_conf = []
 
     for flight in flights:
         conf = flight.get("confirmation")
         if conf:
-            if conf not in by_conf:
-                by_conf[conf] = flight
-            else:
-                # Keep most recent email
-                existing_date = normalize_datetime(by_conf[conf].get("email_date"))
-                new_date = normalize_datetime(flight.get("email_date"))
-                if new_date > existing_date:
-                    by_conf[conf] = flight
+            by_conf[conf].append(flight)
         else:
             no_conf.append(flight)
 
-    return list(by_conf.values()) + no_conf
+    result = []
+
+    for conf, conf_flights in by_conf.items():
+        # Collect all unique segments from all emails with this confirmation
+        # Key: (route, date) to deduplicate same segment from multiple emails
+        segments = {}
+        best_email = None
+        best_date = datetime.min
+
+        for flight in conf_flights:
+            # Track the most recent email for metadata
+            email_date = normalize_datetime(flight.get("email_date"))
+            if email_date > best_date:
+                best_date = email_date
+                best_email = flight
+
+            fi = flight.get("flight_info", {})
+            route = fi.get("route")
+            dates = fi.get("dates", [])
+            flight_numbers = fi.get("flight_numbers", [])
+
+            if route and dates:
+                # Single segment with specific date
+                for i, date in enumerate(dates):
+                    # Try to get corresponding flight number
+                    fn = flight_numbers[i] if i < len(flight_numbers) else (flight_numbers[0] if flight_numbers else "")
+
+                    # Create segment key
+                    seg_key = (route, date)
+                    if seg_key not in segments:
+                        segments[seg_key] = {
+                            "route": route,
+                            "date": date,
+                            "flight_number": fn
+                        }
+            elif route:
+                # Route without specific date - use email date
+                seg_key = (route, str(email_date.date()) if email_date != datetime.min else "")
+                if seg_key not in segments:
+                    segments[seg_key] = {
+                        "route": route,
+                        "date": "",
+                        "flight_number": flight_numbers[0] if flight_numbers else ""
+                    }
+
+        if segments:
+            # Create one result entry per segment
+            for seg_key, seg_data in segments.items():
+                flight_entry = {
+                    "confirmation": conf,
+                    "email_date": best_email.get("email_date") if best_email else None,
+                    "from_addr": best_email.get("from_addr", "") if best_email else "",
+                    "subject": best_email.get("subject", "") if best_email else "",
+                    "airline": best_email.get("airline", "") if best_email else "",
+                    "flight_info": {
+                        "confirmation": conf,
+                        "route": seg_data["route"],
+                        "dates": [seg_data["date"]] if seg_data["date"] else [],
+                        "flight_numbers": [seg_data["flight_number"]] if seg_data["flight_number"] else [],
+                        "airports": list(seg_data["route"]) if seg_data["route"] else [],
+                        "email_type": "booking"
+                    }
+                }
+                result.append(flight_entry)
+        else:
+            # No route info - just use best email
+            if best_email:
+                result.append(best_email)
+
+    return result + no_conf
 
 
 def generate_pdf_from_results():
