@@ -30,6 +30,7 @@ EXCLUDED_CODES = {
     'SELECT', 'POLICY', 'POINTS', 'ACCOUNT', 'WINDOW', 'MIDDLE',
     'FLYING', 'OFFERS', 'EXTRAS', 'HOTELS', 'SOCIAL', 'FOLLOW',
     'DATES', 'TIMES', 'PRICES', 'ROUTES', 'FARES', 'CHANNEL',
+    'EMAILS',  # False positive from "receive their emails"
 }
 
 MONTH_MAP = {
@@ -191,9 +192,42 @@ def extract_flight_segments(text: str, email_year: int) -> List[Dict]:
 
     Pattern 2: Cape Air codeshare - ORIGIN DEST Flight N ... Sold as B6 NUMBER ... DAY, MONTH DATE
     Example: MVY BOS Flight 1 9K 3261 1 Sold as B6 5924 ... Thu, Jul 17 6:10pm
+
+    Pattern 4: Old JetBlue format (2015-2017) with city names
+    Example: Wed, Oct 14 03:15 PM 06:09 PM PROVIDENCE, RI (PVD) to ORLANDO, FL (MCO) 1075
     """
     segments = []
     seen_keys = set()  # Track (origin, dest, date) to avoid duplicates
+
+    # Pattern 4: Old JetBlue format (2015-2017) - must run first as it's very specific
+    # Format: Day, Month DD HH:MM AM/PM HH:MM AM/PM CITY, ST (ORG) to CITY, ST (DST) FLIGHTNUM
+    pattern4 = r'(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})\s+\d{1,2}:\d{2}\s*[AP]M\s+\d{1,2}:\d{2}\s*[AP]M\s+[A-Z][A-Za-z\s]+,\s*[A-Z]{2}\s+\(([A-Z]{3})\)\s+to\s+[A-Z][A-Za-z\s]+,\s*[A-Z]{2}\s+\(([A-Z]{3})\)\s+(\d+)'
+
+    for match in re.finditer(pattern4, text, re.IGNORECASE):
+        month_str = match.group(1)
+        day = int(match.group(2))
+        origin = match.group(3).upper()
+        dest = match.group(4).upper()
+        flight_num = match.group(5)
+
+        if not is_valid_airport(origin) or not is_valid_airport(dest):
+            continue
+        if origin == dest:
+            continue
+
+        date = parse_date_with_year(month_str, day, email_year)
+        if not date:
+            continue
+
+        key = (origin, dest, date)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            segments.append({
+                "origin": origin,
+                "destination": dest,
+                "flight_number": f"B6{flight_num}",
+                "date": date,
+            })
 
     # Pattern 1: Standard JetBlue flight format (airports directly before Flight)
     pattern1 = r'\b([A-Z]{3})\s+([A-Z]{3})\s+Flight\s+(\d+)\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})'
@@ -288,7 +322,7 @@ def extract_flight_segments(text: str, email_year: int) -> List[Dict]:
                 "date": date,
             })
 
-    # Pattern 1c: JetBlue format with "Flights" header
+    # Pattern 1c: JetBlue format with "Flights" header (first segment)
     # Example: Flights BOS LAX Boston, MA ... Date Tue, Feb 11 Departs 6:50am ... Flight 287
     pattern1c = r'Flights\s+([A-Z]{3})\s+([A-Z]{3}).*?Date\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2}).*?Flight\s+(\d+)'
 
@@ -318,10 +352,81 @@ def extract_flight_segments(text: str, email_year: int) -> List[Dict]:
                 "date": date,
             })
 
+    # Pattern 1d: JetBlue continuation segment (after first segment, no "Flights" prefix)
+    # Example: MCI BOS Kansas City ... Date Mon, Sep 04 ... Flight 2364
+    # Match: ORIGIN DEST City ... Date Day, Month DD ... Flight NUM
+    pattern1d = r'\b([A-Z]{3})\s+([A-Z]{3})\s+[A-Z][a-z]+[^F]*?Date\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})\s+Departs.*?Flight\s+(\d+)'
+
+    for match in re.finditer(pattern1d, text, re.IGNORECASE | re.DOTALL):
+        origin = match.group(1).upper()
+        dest = match.group(2).upper()
+        month_str = match.group(3)
+        day = int(match.group(4))
+        flight_num = match.group(5)
+
+        if not is_valid_airport(origin) or not is_valid_airport(dest):
+            continue
+        if origin == dest:
+            continue
+
+        date = parse_date_with_year(month_str, day, email_year)
+        if not date:
+            continue
+
+        key = (origin, dest, date)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            segments.append({
+                "origin": origin,
+                "destination": dest,
+                "flight_number": f"B6{flight_num}",
+                "date": date,
+            })
+
+    # Pattern 5: Expedia format - "Departure Day, Month DD ... Airline FlightNum ... City (ORG) ... City (DST)"
+    # Example: "Departure Thu, Jul 5 United 2155 Houston (IAH) 6:05pm Terminal: C Chicago (ORD) 8:47pm"
+    # Airline code mapping for non-JetBlue carriers
+    AIRLINE_CODES = {
+        'united': 'UA', 'delta': 'DL', 'american': 'AA', 'southwest': 'WN',
+        'jetblue': 'B6', 'alaska': 'AS', 'spirit': 'NK', 'frontier': 'F9',
+    }
+
+    expedia_pattern = r'Departure\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Sept|Oct|Nov|Dec)[a-z]*\s+(\d{1,2})\s+(\w+)\s+(\d+)\s+[A-Za-z\s]+\(([A-Z]{3})\).*?[A-Za-z\s]+\(([A-Z]{3})\)'
+
+    for match in re.finditer(expedia_pattern, text, re.IGNORECASE | re.DOTALL):
+        month_str = match.group(1)
+        day = int(match.group(2))
+        airline_name = match.group(3).lower()
+        flight_num = match.group(4)
+        origin = match.group(5).upper()
+        dest = match.group(6).upper()
+
+        if not is_valid_airport(origin) or not is_valid_airport(dest):
+            continue
+        if origin == dest:
+            continue
+
+        date = parse_date_with_year(month_str, day, email_year)
+        if not date:
+            continue
+
+        # Get airline code
+        airline_code = AIRLINE_CODES.get(airline_name, airline_name.upper()[:2])
+
+        key = (origin, dest, date)
+        if key not in seen_keys:
+            seen_keys.add(key)
+            segments.append({
+                "origin": origin,
+                "destination": dest,
+                "flight_number": f"{airline_code}{flight_num}",
+                "date": date,
+            })
+
     # Pattern 3: Delta format - "Day, DDMON ... DELTA XXXX ... CITY TIME CITY TIME"
-    # Example: "Tue, 02DEC...DELTA 2188...DETROIT 12:22PM ATLANTA 02:21PM"
-    # First find Delta flight with date
-    delta_pattern = r'(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC).*?DELTA\s+(\d+).*?([A-Z][A-Z\s]+?)\s+\d{1,2}:\d{2}[AP]M\s+([A-Z][A-Z\s]+?)\s+\d{1,2}:\d{2}[AP]M'
+    # Example: "Tue, 17APR...DELTA 2971...DETROIT 8:11pm BOSTON, MA 10:09pm"
+    # Simplified pattern that works with various Delta email formats
+    delta_pattern = r'(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[a-z]*,?\s*(\d{1,2})(JAN|FEB|MAR|APR|MAY|JUN|JUL|AUG|SEP|OCT|NOV|DEC).*?DELTA\s+(\d+).*?([A-Z][A-Z]+)\s+\d{1,2}:\d{2}[ap]m\s+([A-Z][A-Z]+)'
 
     for match in re.finditer(delta_pattern, text, re.IGNORECASE | re.DOTALL):
         day = int(match.group(1))

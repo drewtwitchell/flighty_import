@@ -38,6 +38,9 @@ EXCLUDED_CODES = {
     'OBC',  # Obock, Djibouti - very obscure, unlikely destination
     'USC',  # Union County, SC - tiny airport, "USC" appears in university contexts
     'CLS',  # Centralia, WA - tiny municipal airport
+    'ONE',  # Onepusu, Solomon Islands - "one" is common word
+    'THI',  # Tichitt, Mauritania - partial word "thi" from "this"
+    'ABD',  # Abadan, Iran - partial word from text
 }
 
 # Friendly names for major airports (override file names for cleaner display)

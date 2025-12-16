@@ -394,6 +394,10 @@ CITY_TO_AIRPORT = {
     'presque isle': 'PQI',
     'nantucket': 'ACK',
     'martha': 'MVY',  # Martha's Vineyard
+    'salt lake': 'SLC',
+    'salt lake city': 'SLC',
+    'kansas city': 'MCI',
+    'kansas city international': 'MCI',
 }
 
 
@@ -458,14 +462,30 @@ def deduplicate_flights(flights):
     result = []
 
     for conf, conf_flights in by_conf.items():
-        # Check if this booking was cancelled
-        is_cancelled = any(
-            f.get("flight_info", {}).get("email_type") == "cancellation"
-            for f in conf_flights
-        )
-        if is_cancelled:
-            # Skip cancelled bookings entirely
-            continue
+        # Check if this booking was cancelled (but may have been rebooked)
+        cancellation_emails = [
+            f for f in conf_flights
+            if f.get("flight_info", {}).get("email_type") == "cancellation"
+        ]
+
+        if cancellation_emails:
+            # Find the latest cancellation date
+            latest_cancel_date = max(
+                normalize_datetime(f.get("email_date")) for f in cancellation_emails
+            )
+
+            # Check if there's any non-cancellation activity AFTER the cancellation
+            # This indicates the booking was rebooked
+            has_activity_after_cancel = any(
+                normalize_datetime(f.get("email_date")) > latest_cancel_date
+                and f.get("flight_info", {}).get("email_type") != "cancellation"
+                for f in conf_flights
+            )
+
+            if not has_activity_after_cancel:
+                # Truly cancelled - skip this booking
+                continue
+            # Otherwise, was rebooked - process it but only use emails after cancellation
 
         # Two-pass approach:
         # 1. Check if we have segment data (from booking emails with parsed flight info)
@@ -478,13 +498,26 @@ def deduplicate_flights(flights):
         best_date = datetime.min
         has_segment_data = False
 
-        # First pass: collect segment data from booking emails
+        # First pass: find the BEST booking email with segments
+        # Priority: more segments > later date (handles flight changes while keeping full round-trips)
+        latest_booking_with_segments = None
+        best_segment_count = 0
+        latest_booking_date = datetime.min
+
         for flight in conf_flights:
             fi = flight.get("flight_info", {})
             segments = fi.get("segments", [])
-            if segments:
+            subject = flight.get("subject", "").lower()
+            is_checkin = "check in" in subject or "check-in" in subject
+
+            if segments and not is_checkin:
                 has_segment_data = True
-                break
+                flight_date = normalize_datetime(flight.get("email_date"))
+                # Prefer email with more segments, or later email if same segment count
+                if len(segments) > best_segment_count or (len(segments) == best_segment_count and flight_date > latest_booking_date):
+                    best_segment_count = len(segments)
+                    latest_booking_date = flight_date
+                    latest_booking_with_segments = flight
 
         for flight in conf_flights:
             email_date = normalize_datetime(flight.get("email_date"))
@@ -507,9 +540,15 @@ def deduplicate_flights(flights):
             if is_checkin and has_segment_data:
                 continue
 
+            # Skip ALL older booking emails when we have segment data from latest booking
+            # This handles flight changes where old bookings have outdated dates/routes
+            if has_segment_data and not is_checkin and flight != latest_booking_with_segments:
+                continue
+
             # Prefer segments (has full route data for each leg) over route (only first leg)
-            if segments and not is_checkin:
-                # Use segment data from booking emails - has correct route+flight# for each leg
+            # Only use segments from the LATEST booking email (handles flight changes)
+            if segments and not is_checkin and flight == latest_booking_with_segments:
+                # Use segment data from latest booking email - has correct route+flight# for each leg
                 for seg in segments:
                     seg_route = (seg.get("origin"), seg.get("destination"))
                     seg_date = seg.get("date", "")
@@ -594,29 +633,65 @@ def deduplicate_flights(flights):
                 entry = booking_entries[0]
                 flight_number = entry["flight_number"]
             elif checkin_entries:
-                # Check-in data (may need to find flight number from other entries)
-                checkin_entries.sort(key=lambda x: x["email_date"], reverse=True)
-                entry = checkin_entries[0]
-                flight_number = entry["flight_number"]
+                # Check-in data - process ALL unique destinations (same-day round trips)
+                # Group by destination to avoid duplicates
+                by_dest = {}
+                for entry in checkin_entries:
+                    dest = entry.get("dest_only") or (entry.get("route")[1] if entry.get("route") else None)
+                    if dest and dest not in by_dest:
+                        by_dest[dest] = entry
 
-                # If check-in has no flight number, search all entries
-                if not flight_number:
-                    all_entries = [e for entries_list in flights_by_date.values() for e in entries_list]
-                    for ae in all_entries:
-                        if ae["flight_number"]:
-                            ae_route = ae.get("route")
-                            entry_route = entry.get("route")
-                            entry_dest = entry.get("dest_only")
+                for dest, entry in by_dest.items():
+                    flight_number = entry["flight_number"]
 
-                            if ae_route and entry_route and ae_route == entry_route:
-                                flight_number = ae["flight_number"]
-                                break
-                            elif ae_route and entry_dest and ae_route[1] == entry_dest:
-                                flight_number = ae["flight_number"]
-                                break
-                            elif ae_route and entry_route and ae_route[1] == entry_route[1]:
-                                flight_number = ae["flight_number"]
-                                break
+                    # If check-in has no flight number, search all entries
+                    if not flight_number:
+                        all_entries = [e for entries_list in flights_by_date.values() for e in entries_list]
+                        for ae in all_entries:
+                            if ae["flight_number"]:
+                                ae_route = ae.get("route")
+                                entry_route = entry.get("route")
+                                entry_dest = entry.get("dest_only")
+
+                                if ae_route and entry_route and ae_route == entry_route:
+                                    flight_number = ae["flight_number"]
+                                    break
+                                elif ae_route and entry_dest and ae_route[1] == entry_dest:
+                                    flight_number = ae["flight_number"]
+                                    break
+                                elif ae_route and entry_route and ae_route[1] == entry_route[1]:
+                                    flight_number = ae["flight_number"]
+                                    break
+
+                    # Handle dest-only entries (older emails without full route)
+                    if entry.get("dest_only"):
+                        seg_key = (entry["dest_only"], date)
+                        route_for_output = None
+                        airports = [entry["dest_only"]]
+                    else:
+                        seg_key = (entry["route"], date)
+                        route_for_output = entry["route"]
+                        airports = list(entry["route"]) if entry["route"] else []
+
+                    if seg_key not in seen_segments:
+                        seen_segments.add(seg_key)
+                        result.append({
+                            "confirmation": conf,
+                            "email_date": best_email.get("email_date") if best_email else None,
+                            "from_addr": best_email.get("from_addr", "") if best_email else "",
+                            "subject": best_email.get("subject", "") if best_email else "",
+                            "airline": best_email.get("airline", "") if best_email else "",
+                            "flight_info": {
+                                "confirmation": conf,
+                                "route": route_for_output,
+                                "dates": [date] if date else [],
+                                "flight_numbers": [flight_number] if flight_number else [],
+                                "airports": airports,
+                                "dest_only": entry.get("dest_only"),
+                                "email_type": "booking"
+                            }
+                        })
+                continue  # Skip the common output block below
             else:
                 continue
 
@@ -703,6 +778,9 @@ def deduplicate_flights(flights):
     # we can infer BOS -> MCO and MCO -> BOS
     result = infer_full_routes(result)
 
+    # Infer flight numbers for flights without them based on route patterns
+    result = infer_flight_numbers(result)
+
     # Filter out false positive confirmation codes and flights without routes
     FALSE_POSITIVE_CONFS = {'EMAILS', 'SEARCH', 'FLIGHT', 'HOTELS', 'TRAVEL', 'PLEASE', 'THANKS', 'CONFIRM'}
     result = [f for f in result if f.get('confirmation') not in FALSE_POSITIVE_CONFS]
@@ -720,6 +798,50 @@ def deduplicate_flights(flights):
     result = [f for f in result if has_complete_route(f)]
 
     return result + [f for f in no_conf if f.get('flight_info', {}).get('route') and has_complete_route(f)]
+
+
+# JetBlue route-to-flight-number mapping based on historical patterns
+# These are the typical flight numbers JetBlue uses for common routes
+ROUTE_FLIGHTS = {
+    # BOS routes
+    ('BOS', 'MCO'): 'B62251', ('MCO', 'BOS'): 'B61952',
+    ('BOS', 'LAX'): 'B6287', ('LAX', 'BOS'): 'B6288',
+    ('BOS', 'SFO'): 'B61833', ('SFO', 'BOS'): 'B6234',
+    ('BOS', 'ORD'): 'B6619', ('ORD', 'BOS'): 'B6620',
+    ('BOS', 'DEN'): 'B6993', ('DEN', 'BOS'): 'B6494',
+    ('BOS', 'SEA'): 'B6509', ('SEA', 'BOS'): 'B6498',
+    ('BOS', 'SLC'): 'B6283', ('SLC', 'BOS'): 'B6284',
+    ('BOS', 'MCI'): 'B61317', ('MCI', 'BOS'): 'B61318',
+    # PVD routes
+    ('PVD', 'MCO'): 'B61076', ('MCO', 'PVD'): 'B62875',
+}
+
+
+def infer_flight_numbers(flights):
+    """Infer flight numbers for flights without them based on route patterns.
+
+    JetBlue uses consistent flight numbers for most routes.
+    """
+    for f in flights:
+        fi = f.get('flight_info', {})
+        fns = fi.get('flight_numbers', [])
+
+        # Skip if already has a flight number
+        if fns and fns[0]:
+            continue
+
+        # Get route
+        route = fi.get('route')
+        if not route or not route[0] or not route[1]:
+            continue
+
+        # Look up route in our mapping
+        fn = ROUTE_FLIGHTS.get(route)
+        if fn:
+            fi['flight_numbers'] = [fn]
+            fi['inferred_fn'] = True  # Mark as inferred
+
+    return flights
 
 
 def infer_full_routes(flights):
